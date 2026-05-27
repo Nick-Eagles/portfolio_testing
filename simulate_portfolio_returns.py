@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 
 INPUT_CSV = DATA_DIR / "asset_class_nominal_returns_1927.csv"
-OUTPUT_CSV = DATA_DIR / "portfolio_return_simulations.csv"
+OUTPUT_CSV = DATA_DIR / "portfolio_return_simulations.csv.gz"
 
 RETURN_COLUMNS = [
     "us_stocks_nominal_return_pct",
@@ -42,6 +42,7 @@ def load_returns() -> pd.DataFrame:
 
 
 def generate_portfolio_weights() -> pd.DataFrame:
+    # Enumerate a symmetric lattice over the 3-asset simplex at 2% increments.
     grid = np.arange(0, 1 + GRID_STEP / 2, GRID_STEP)
     weights = []
 
@@ -66,6 +67,8 @@ def simulate_returns(returns: pd.DataFrame, weights: pd.DataFrame) -> pd.DataFra
     weight_matrix = weights.to_numpy(dtype=float)
     portfolio_count = len(weights)
 
+    # Each year's portfolio return uses the target weights directly, which is
+    # equivalent to annual rebalancing back to the target allocation.
     annual_portfolio_returns = asset_returns @ weight_matrix.T
     annual_growth = 1 + annual_portfolio_returns
     cumulative_growth = np.vstack(
@@ -75,6 +78,7 @@ def simulate_returns(returns: pd.DataFrame, weights: pd.DataFrame) -> pd.DataFra
     simulations = []
     for horizon in range(1, MAX_HORIZON + 1):
         start_years = years[: len(years) - horizon + 1]
+        # Rolling-window wealth is the ratio of cumulative growth endpoints.
         relative_returns = cumulative_growth[horizon:] / cumulative_growth[:-horizon]
 
         horizon_data = pd.DataFrame(
