@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import pandas as pd
@@ -13,16 +14,8 @@ from plotnine import (
     theme_minimal,
 )
 
+from dataset_variants import DATASET_VARIANTS, ROOT, WORKBOOK, get_dataset_variant
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-PLOTS_DIR = ROOT / "plots"
-
-WORKBOOK = DATA_DIR / "Backtest-Portfolio-returns-rev25c.xlsx"
-FULL_CSV = DATA_DIR / "asset_class_nominal_returns.csv"
-SUBSET_CSV = DATA_DIR / "asset_class_nominal_returns_1927.csv"
-FULL_PLOT = PLOTS_DIR / "asset_class_line_plot_full.pdf"
-SUBSET_PLOT = PLOTS_DIR / "asset_class_line_plot_1927.pdf"
 
 SOURCE_COLUMNS = {
     "TSM (US)": "us_stocks_nominal_return_pct",
@@ -41,6 +34,17 @@ PLOT_COLORS = {
     "US Bonds": "#386cb0",
     "Treasury Bills": "#d95f02",
 }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build asset-class return extracts and growth plots.")
+    parser.add_argument(
+        "--dataset",
+        choices=[*DATASET_VARIANTS.keys(), "all"],
+        default="from_1927",
+        help="Dataset variant to generate.",
+    )
+    return parser.parse_args()
 
 
 def load_nominal_returns() -> pd.DataFrame:
@@ -69,11 +73,18 @@ def load_nominal_returns() -> pd.DataFrame:
     return clean
 
 
+def get_output_paths(dataset: str) -> tuple[Path, Path]:
+    variant = get_dataset_variant(dataset)
+    return (
+        variant.data_dir / "asset_class_nominal_returns.csv",
+        variant.plots_dir / "asset_class_line_plot.pdf",
+    )
+
+
 def make_growth_plot(returns: pd.DataFrame, plot_file: Path, title: str) -> None:
-    return_columns = list(SOURCE_COLUMNS.values())
     plot_data = returns.melt(
         id_vars="year",
-        value_vars=return_columns,
+        value_vars=list(SOURCE_COLUMNS.values()),
         var_name="asset_class",
         value_name="nominal_return_pct",
     )
@@ -112,25 +123,29 @@ def make_growth_plot(returns: pd.DataFrame, plot_file: Path, title: str) -> None
         )
     )
 
-    PLOTS_DIR.mkdir(exist_ok=True)
+    plot_file.parent.mkdir(parents=True, exist_ok=True)
     plot.save(plot_file, verbose=False)
 
 
+def build_dataset(full_returns: pd.DataFrame, dataset: str) -> None:
+    variant = get_dataset_variant(dataset)
+    returns = full_returns[full_returns["year"] >= variant.start_year].copy()
+    csv_file, plot_file = get_output_paths(dataset)
+    csv_file.parent.mkdir(parents=True, exist_ok=True)
+    returns.to_csv(csv_file, index=False)
+    make_growth_plot(returns, plot_file, f"Growth of $1 by Asset Class: {variant.title_suffix}")
+
+    print(f"Wrote {csv_file.relative_to(ROOT)} ({len(returns)} rows)")
+    print(f"Wrote {plot_file.relative_to(ROOT)}")
+
+
 def main() -> None:
-    returns = load_nominal_returns()
+    args = parse_args()
+    full_returns = load_nominal_returns()
+    datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
 
-    DATA_DIR.mkdir(exist_ok=True)
-    returns.to_csv(FULL_CSV, index=False)
-    returns[returns["year"] >= 1927].to_csv(SUBSET_CSV, index=False)
-
-    subset = returns[returns["year"] >= 1927]
-    make_growth_plot(returns, FULL_PLOT, "Growth of $1 by Asset Class")
-    make_growth_plot(subset, SUBSET_PLOT, "Growth of $1 by Asset Class Since 1927")
-
-    print(f"Wrote {FULL_CSV.relative_to(ROOT)} ({len(returns)} rows)")
-    print(f"Wrote {SUBSET_CSV.relative_to(ROOT)} ({len(subset)} rows)")
-    print(f"Wrote {FULL_PLOT.relative_to(ROOT)}")
-    print(f"Wrote {SUBSET_PLOT.relative_to(ROOT)}")
+    for dataset in datasets:
+        build_dataset(full_returns, dataset)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -19,16 +20,8 @@ from plotnine import (
     theme_minimal,
 )
 
+from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-PLOTS_DIR = ROOT / "plots" / "pure_asset_EDA"
-
-SIMULATION_CSV = DATA_DIR / "portfolio_return_simulations.csv.gz"
-
-Q02_LINE_PLOT = PLOTS_DIR / "pure_assets_q02_line_plot.pdf"
-QUANTILE_RIBBON_PLOT = PLOTS_DIR / "pure_assets_quantile_ribbons.pdf"
-QUANTILE_HEATMAPS = PLOTS_DIR / "pure_assets_quantile_heatmaps.pdf"
 
 PURE_ASSET_MAP = {
     (1.0, 0.0, 0.0): "US Stocks",
@@ -53,18 +46,69 @@ LOWESS_FRACTION = 0.10
 SMOOTH_GRID_POINTS = 300
 
 
-def load_pure_asset_returns() -> pd.DataFrame:
-    simulations = pd.read_csv(SIMULATION_CSV)
-    pure = simulations[
-        ((simulations["stock_weight"] == 1.0) & (simulations["bond_weight"] == 0.0) & (simulations["t_bill_weight"] == 0.0))
-        | ((simulations["stock_weight"] == 0.0) & (simulations["bond_weight"] == 1.0) & (simulations["t_bill_weight"] == 0.0))
-        | ((simulations["stock_weight"] == 0.0) & (simulations["bond_weight"] == 0.0) & (simulations["t_bill_weight"] == 1.0))
-    ].copy()
-    pure["asset_class"] = [
-        PURE_ASSET_MAP[(row.stock_weight, row.bond_weight, row.t_bill_weight)]
-        for row in pure.itertuples()
-    ]
-    return pure
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Explore pure-asset tail behavior for a dataset variant.")
+    parser.add_argument(
+        "--dataset",
+        choices=[*DATASET_VARIANTS.keys(), "all"],
+        default="from_1927",
+        help="Dataset variant to generate.",
+    )
+    return parser.parse_args()
+
+
+def get_simulation_csv(dataset: str) -> Path:
+    return get_dataset_variant(dataset).data_dir / "portfolio_return_simulations.csv.gz"
+
+
+def get_asset_returns_csv(dataset: str) -> Path:
+    return get_dataset_variant(dataset).data_dir / "asset_class_nominal_returns.csv"
+
+
+def get_plot_paths(dataset: str) -> tuple[Path, Path, Path]:
+    base_dir = get_dataset_variant(dataset).plots_dir / "pure_asset_EDA"
+    return (
+        base_dir / "pure_assets_q02_line_plot.pdf",
+        base_dir / "pure_assets_quantile_ribbons.pdf",
+        base_dir / "pure_assets_quantile_heatmaps.pdf",
+    )
+
+
+def load_pure_asset_returns(dataset: str) -> pd.DataFrame:
+    asset_returns_csv = get_asset_returns_csv(dataset)
+    if not asset_returns_csv.exists():
+        from build_asset_class_returns import build_dataset, load_nominal_returns
+
+        build_dataset(load_nominal_returns(), dataset)
+
+    asset_returns = pd.read_csv(asset_returns_csv).sort_values("year").reset_index(drop=True)
+    columns = {
+        "US Stocks": "us_stocks_nominal_return_pct",
+        "US Bonds": "us_bonds_nominal_return_pct",
+        "Treasury Bills": "treasury_bills_nominal_return_pct",
+    }
+
+    rows = []
+    years = asset_returns["year"].to_numpy()
+    for asset_class, column in columns.items():
+        annual_growth = 1 + asset_returns[column].to_numpy(dtype=float) / 100
+        cumulative_growth = np.concatenate([[1.0], np.cumprod(annual_growth)])
+
+        for horizon in range(1, 51):
+            start_years = years[: len(years) - horizon + 1]
+            relative_returns = cumulative_growth[horizon:] / cumulative_growth[:-horizon]
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "asset_class": asset_class,
+                        "horizon": horizon,
+                        "relative_return": relative_returns,
+                        "permutation": start_years,
+                    }
+                )
+            )
+
+    return pd.concat(rows, ignore_index=True)
 
 
 def annualize_relative_return(relative_return: float, horizon: int) -> float:
@@ -86,8 +130,7 @@ def make_lower_quantile_summary(pure: pd.DataFrame) -> pd.DataFrame:
             row[f"{key}_annualized"] = annualize_relative_return(wealth, horizon)
         rows.append(row)
 
-    summary = pd.DataFrame(rows).sort_values(["asset_class", "horizon"]).reset_index(drop=True)
-    return summary
+    return pd.DataFrame(rows).sort_values(["asset_class", "horizon"]).reset_index(drop=True)
 
 
 def smooth_curve(frame: pd.DataFrame, y_column: str) -> pd.DataFrame:
@@ -121,7 +164,8 @@ def smooth_curve(frame: pd.DataFrame, y_column: str) -> pd.DataFrame:
     )
 
 
-def make_q02_line_plot(summary: pd.DataFrame) -> None:
+def make_q02_line_plot(summary: pd.DataFrame, plot_file: Path, dataset: str) -> None:
+    variant = get_dataset_variant(dataset)
     line_points = summary[["asset_class", "horizon", "q02_annualized"]].copy()
     smooth_lines = pd.concat(
         [smooth_curve(group, "q02_annualized") for _, group in line_points.groupby("asset_class")],
@@ -143,8 +187,8 @@ def make_q02_line_plot(summary: pd.DataFrame) -> None:
         )
         + scale_color_manual(values=ASSET_COLORS)
         + labs(
-            title="Pure Assets: q=0.02 Annualized Tail Curve",
-            subtitle="Points are lower-interpolation quantiles; lines use LOWESS smoothing",
+            title=f"Pure Assets: q=0.02 Annualized Tail Curve ({variant.title_suffix})",
+            subtitle="Points are lower-interpolation quantiles; lines use local smoothing",
             x="Time horizon (years)",
             y="Annualized relative return",
             color="Asset class",
@@ -156,10 +200,11 @@ def make_q02_line_plot(summary: pd.DataFrame) -> None:
             legend_position="bottom",
         )
     )
-    plot.save(Q02_LINE_PLOT, verbose=False)
+    plot.save(plot_file, verbose=False)
 
 
-def make_quantile_ribbon_plot(summary: pd.DataFrame) -> None:
+def make_quantile_ribbon_plot(summary: pd.DataFrame, plot_file: Path, dataset: str) -> None:
+    variant = get_dataset_variant(dataset)
     smoothed_rows = []
     for _, group in summary.groupby("asset_class"):
         q01 = smooth_curve(group, "q01_annualized")
@@ -216,8 +261,8 @@ def make_quantile_ribbon_plot(summary: pd.DataFrame) -> None:
         + facet_wrap("~ asset_class", scales="free_y", ncol=1)
         + scale_fill_manual(values=BAND_COLORS)
         + labs(
-            title="Pure Assets: Tail-Quantile Sensitivity",
-            subtitle="Ribbons and line use lower-interpolation quantiles with LOWESS smoothing",
+            title=f"Pure Assets: Tail-Quantile Sensitivity ({variant.title_suffix})",
+            subtitle="Ribbons and line use lower-interpolation quantiles with local smoothing",
             x="Time horizon (years)",
             y="Annualized relative return",
             fill="Quantile band",
@@ -229,13 +274,14 @@ def make_quantile_ribbon_plot(summary: pd.DataFrame) -> None:
             legend_position="bottom",
         )
     )
-    plot.save(QUANTILE_RIBBON_PLOT, verbose=False)
+    plot.save(plot_file, verbose=False)
 
 
-def make_heatmaps(summary: pd.DataFrame) -> None:
+def make_heatmaps(summary: pd.DataFrame, plot_file: Path, dataset: str) -> None:
+    variant = get_dataset_variant(dataset)
     fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(10, 11), constrained_layout=True)
     fig.suptitle(
-        "Pure Assets: Quantile Sensitivity Heatmaps\nColor = annualized relative return, centered at 1.0",
+        f"Pure Assets: Quantile Sensitivity Heatmaps ({variant.title_suffix})\nColor = annualized relative return, centered at 1.0",
         fontsize=14,
         fontweight="bold",
     )
@@ -253,11 +299,7 @@ def make_heatmaps(summary: pd.DataFrame) -> None:
         values = pivot.to_numpy()
 
         max_deviation = float(np.nanmax(np.abs(values - 1.0)))
-        norm = TwoSlopeNorm(
-            vmin=1.0 - max_deviation,
-            vcenter=1.0,
-            vmax=1.0 + max_deviation,
-        )
+        norm = TwoSlopeNorm(vmin=1.0 - max_deviation, vcenter=1.0, vmax=1.0 + max_deviation)
 
         image = ax.imshow(
             values,
@@ -281,23 +323,30 @@ def make_heatmaps(summary: pd.DataFrame) -> None:
         colorbar = fig.colorbar(image, ax=ax, pad=0.01)
         colorbar.set_label("Annualized relative return")
 
-    fig.savefig(QUANTILE_HEATMAPS)
+    fig.savefig(plot_file)
     plt.close(fig)
 
 
-def main() -> None:
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    pure = load_pure_asset_returns()
+def run_dataset(dataset: str) -> None:
+    pure = load_pure_asset_returns(dataset)
     summary = make_lower_quantile_summary(pure)
+    q02_plot, ribbon_plot, heatmap_plot = get_plot_paths(dataset)
+    q02_plot.parent.mkdir(parents=True, exist_ok=True)
 
-    make_q02_line_plot(summary)
-    make_quantile_ribbon_plot(summary)
-    make_heatmaps(summary)
+    make_q02_line_plot(summary, q02_plot, dataset)
+    make_quantile_ribbon_plot(summary, ribbon_plot, dataset)
+    make_heatmaps(summary, heatmap_plot, dataset)
 
-    print(f"Wrote {Q02_LINE_PLOT.relative_to(ROOT)}")
-    print(f"Wrote {QUANTILE_RIBBON_PLOT.relative_to(ROOT)}")
-    print(f"Wrote {QUANTILE_HEATMAPS.relative_to(ROOT)}")
+    print(f"Wrote {q02_plot.relative_to(ROOT)}")
+    print(f"Wrote {ribbon_plot.relative_to(ROOT)}")
+    print(f"Wrote {heatmap_plot.relative_to(ROOT)}")
+
+
+def main() -> None:
+    args = parse_args()
+    datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
+    for dataset in datasets:
+        run_dataset(dataset)
 
 
 if __name__ == "__main__":

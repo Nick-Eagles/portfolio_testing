@@ -1,14 +1,11 @@
-from pathlib import Path
+import argparse
+import gzip
 
 import numpy as np
 import pandas as pd
 
+from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-
-INPUT_CSV = DATA_DIR / "asset_class_nominal_returns_1927.csv"
-OUTPUT_CSV = DATA_DIR / "portfolio_return_simulations.csv.gz"
 
 RETURN_COLUMNS = [
     "us_stocks_nominal_return_pct",
@@ -20,20 +17,38 @@ GRID_STEP = 0.02
 MAX_HORIZON = 50
 
 
-def load_returns() -> pd.DataFrame:
-    if not INPUT_CSV.exists():
-        from build_asset_class_returns import SUBSET_CSV, load_nominal_returns
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Simulate rebalanced portfolio returns for a dataset variant.")
+    parser.add_argument(
+        "--dataset",
+        choices=[*DATASET_VARIANTS.keys(), "all"],
+        default="from_1927",
+        help="Dataset variant to generate.",
+    )
+    return parser.parse_args()
 
-        returns = load_nominal_returns()
-        DATA_DIR.mkdir(exist_ok=True)
-        returns[returns["year"] >= 1927].to_csv(SUBSET_CSV, index=False)
 
-    returns = pd.read_csv(INPUT_CSV)
+def get_input_csv(dataset: str):
+    return get_dataset_variant(dataset).data_dir / "asset_class_nominal_returns.csv"
+
+
+def get_output_csv(dataset: str):
+    return get_dataset_variant(dataset).data_dir / "portfolio_return_simulations.csv.gz"
+
+
+def load_returns(dataset: str) -> pd.DataFrame:
+    input_csv = get_input_csv(dataset)
+    if not input_csv.exists():
+        from build_asset_class_returns import build_dataset, load_nominal_returns
+
+        build_dataset(load_nominal_returns(), dataset)
+
+    returns = pd.read_csv(input_csv)
     required_columns = ["year", *RETURN_COLUMNS]
     missing_columns = set(required_columns) - set(returns.columns)
     if missing_columns:
         missing = ", ".join(sorted(missing_columns))
-        raise ValueError(f"{INPUT_CSV} is missing required columns: {missing}")
+        raise ValueError(f"{input_csv} is missing required columns: {missing}")
 
     returns = returns[required_columns].copy()
     returns["year"] = returns["year"].astype(int)
@@ -96,18 +111,67 @@ def simulate_returns(returns: pd.DataFrame, weights: pd.DataFrame) -> pd.DataFra
     return pd.concat(simulations, ignore_index=True)
 
 
-def main() -> None:
-    returns = load_returns()
+def write_simulations(returns: pd.DataFrame, weights: pd.DataFrame, output_csv) -> int:
+    years = returns["year"].to_numpy()
+    asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
+    weight_matrix = weights.to_numpy(dtype=float)
+    portfolio_count = len(weights)
+
+    annual_portfolio_returns = asset_returns @ weight_matrix.T
+    annual_growth = 1 + annual_portfolio_returns
+    cumulative_growth = np.vstack(
+        [np.ones((1, portfolio_count)), np.cumprod(annual_growth, axis=0)]
+    )
+
+    rows_written = 0
+    header = True
+    with gzip.open(output_csv, "wt", newline="") as handle:
+        for horizon in range(1, MAX_HORIZON + 1):
+            if not header:
+                handle.write("\n")
+
+            start_years = years[: len(years) - horizon + 1]
+            relative_returns = cumulative_growth[horizon:] / cumulative_growth[:-horizon]
+
+            horizon_data = pd.DataFrame(
+                {
+                    "stock_weight": np.tile(weights["stock_weight"].to_numpy(), len(start_years)),
+                    "bond_weight": np.tile(weights["bond_weight"].to_numpy(), len(start_years)),
+                    "t_bill_weight": np.tile(weights["t_bill_weight"].to_numpy(), len(start_years)),
+                    "horizon": horizon,
+                    "relative_return": relative_returns.reshape(-1),
+                    "permutation": np.repeat(start_years, portfolio_count),
+                }
+            )
+            horizon_data.to_csv(handle, index=False, header=header, lineterminator="\n")
+            header = False
+            rows_written += len(horizon_data)
+
+    return rows_written
+
+
+def run_dataset(dataset: str) -> None:
+    returns = load_returns(dataset)
     weights = generate_portfolio_weights()
-    simulations = simulate_returns(returns, weights)
+    output_csv = get_output_csv(dataset)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    temp_csv = output_csv.with_suffix(output_csv.suffix + ".tmp")
+    rows_written = write_simulations(returns, weights, temp_csv)
+    temp_csv.replace(output_csv)
 
-    simulations.to_csv(OUTPUT_CSV, index=False)
-
+    print(f"Dataset: {dataset}")
     print(f"Input years: {returns['year'].min()}-{returns['year'].max()} ({len(returns)} years)")
     print(f"Portfolios: {len(weights)}")
     print(f"Grid step: {GRID_STEP:.2%}")
     print(f"Horizons: 1-{MAX_HORIZON} years")
-    print(f"Wrote {OUTPUT_CSV.relative_to(ROOT)} ({len(simulations)} rows)")
+    print(f"Wrote {output_csv.relative_to(ROOT)} ({rows_written} rows)")
+
+
+def main() -> None:
+    args = parse_args()
+    datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
+    for dataset in datasets:
+        run_dataset(dataset)
 
 
 if __name__ == "__main__":
