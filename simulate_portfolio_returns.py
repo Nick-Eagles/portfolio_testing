@@ -8,9 +8,9 @@ from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 
 
 RETURN_COLUMNS = [
-    "us_stocks_nominal_return_pct",
-    "us_bonds_nominal_return_pct",
-    "treasury_bills_nominal_return_pct",
+    "us_stocks_real_return_pct",
+    "us_bonds_real_return_pct",
+    "treasury_bills_real_return_pct",
 ]
 
 GRID_STEP = 0.02
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def get_input_csv(dataset: str):
-    return get_dataset_variant(dataset).data_dir / "asset_class_nominal_returns.csv"
+    return get_dataset_variant(dataset).data_dir / "asset_class_real_returns.csv"
 
 
 def get_output_csv(dataset: str):
@@ -39,9 +39,9 @@ def get_output_csv(dataset: str):
 def load_returns(dataset: str) -> pd.DataFrame:
     input_csv = get_input_csv(dataset)
     if not input_csv.exists():
-        from build_asset_class_returns import build_dataset, load_nominal_returns
+        from build_asset_class_returns import build_dataset, load_real_returns
 
-        build_dataset(load_nominal_returns(), dataset)
+        build_dataset(load_real_returns(), dataset)
 
     returns = pd.read_csv(input_csv)
     required_columns = ["year", *RETURN_COLUMNS]

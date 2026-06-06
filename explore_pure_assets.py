@@ -62,7 +62,7 @@ def get_simulation_csv(dataset: str) -> Path:
 
 
 def get_asset_returns_csv(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "asset_class_nominal_returns.csv"
+    return get_dataset_variant(dataset).data_dir / "asset_class_real_returns.csv"
 
 
 def get_plot_paths(dataset: str) -> tuple[Path, Path, Path]:
@@ -77,15 +77,15 @@ def get_plot_paths(dataset: str) -> tuple[Path, Path, Path]:
 def load_pure_asset_returns(dataset: str) -> pd.DataFrame:
     asset_returns_csv = get_asset_returns_csv(dataset)
     if not asset_returns_csv.exists():
-        from build_asset_class_returns import build_dataset, load_nominal_returns
+        from build_asset_class_returns import build_dataset, load_real_returns
 
-        build_dataset(load_nominal_returns(), dataset)
+        build_dataset(load_real_returns(), dataset)
 
     asset_returns = pd.read_csv(asset_returns_csv).sort_values("year").reset_index(drop=True)
     columns = {
-        "US Stocks": "us_stocks_nominal_return_pct",
-        "US Bonds": "us_bonds_nominal_return_pct",
-        "Treasury Bills": "treasury_bills_nominal_return_pct",
+        "US Stocks": "us_stocks_real_return_pct",
+        "US Bonds": "us_bonds_real_return_pct",
+        "Treasury Bills": "treasury_bills_real_return_pct",
     }
 
     rows = []

@@ -18,15 +18,15 @@ from dataset_variants import DATASET_VARIANTS, ROOT, WORKBOOK, get_dataset_varia
 
 
 SOURCE_COLUMNS = {
-    "TSM (US)": "us_stocks_nominal_return_pct",
-    "TBM (US)": "us_bonds_nominal_return_pct",
-    "T-Bill": "treasury_bills_nominal_return_pct",
+    "TSM (US)": "us_stocks_real_return_pct",
+    "TBM (US)": "us_bonds_real_return_pct",
+    "T-Bill": "treasury_bills_real_return_pct",
 }
 
 PLOT_LABELS = {
-    "us_stocks_nominal_return_pct": "US Stocks",
-    "us_bonds_nominal_return_pct": "US Bonds",
-    "treasury_bills_nominal_return_pct": "Treasury Bills",
+    "us_stocks_real_return_pct": "US Stocks",
+    "us_bonds_real_return_pct": "US Bonds",
+    "treasury_bills_real_return_pct": "Treasury Bills",
 }
 
 PLOT_COLORS = {
@@ -47,13 +47,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_nominal_returns() -> pd.DataFrame:
+def load_real_returns() -> pd.DataFrame:
     raw = pd.read_excel(WORKBOOK, sheet_name="Data_Series", engine="calamine", header=None)
 
     headers = raw.iloc[0].tolist()
-    nominal_start = raw.index[raw.iloc[:, 0].eq("Nominal returns")][0] + 1
-    nominal_end = raw.index[raw.iloc[:, 0].eq("Inflation-adjusted")][0]
-    returns = raw.iloc[nominal_start:nominal_end].copy()
+    real_start = raw.index[raw.iloc[:, 0].eq("Inflation-adjusted")][0] + 2
+    returns = raw.iloc[real_start:].copy()
     returns.columns = headers
 
     clean = returns[["ER-adjusted spliced returns", *SOURCE_COLUMNS.keys()]].rename(
@@ -76,7 +75,7 @@ def load_nominal_returns() -> pd.DataFrame:
 def get_output_paths(dataset: str) -> tuple[Path, Path]:
     variant = get_dataset_variant(dataset)
     return (
-        variant.data_dir / "asset_class_nominal_returns.csv",
+        variant.data_dir / "asset_class_real_returns.csv",
         variant.plots_dir / "asset_class_line_plot.pdf",
     )
 
@@ -86,11 +85,11 @@ def make_growth_plot(returns: pd.DataFrame, plot_file: Path, title: str) -> None
         id_vars="year",
         value_vars=list(SOURCE_COLUMNS.values()),
         var_name="asset_class",
-        value_name="nominal_return_pct",
+        value_name="real_return_pct",
     )
     plot_data["asset_class"] = plot_data["asset_class"].map(PLOT_LABELS)
     plot_data["growth_of_1"] = (
-        1 + plot_data["nominal_return_pct"].div(100)
+        1 + plot_data["real_return_pct"].div(100)
     ).groupby(plot_data["asset_class"]).cumprod()
 
     base_year = int(returns["year"].min()) - 1
@@ -98,7 +97,7 @@ def make_growth_plot(returns: pd.DataFrame, plot_file: Path, title: str) -> None
         {
             "year": [base_year] * len(PLOT_LABELS),
             "asset_class": list(PLOT_LABELS.values()),
-            "nominal_return_pct": [pd.NA] * len(PLOT_LABELS),
+            "real_return_pct": [pd.NA] * len(PLOT_LABELS),
             "growth_of_1": [1.0] * len(PLOT_LABELS),
         }
     )
@@ -133,7 +132,7 @@ def build_dataset(full_returns: pd.DataFrame, dataset: str) -> None:
     csv_file, plot_file = get_output_paths(dataset)
     csv_file.parent.mkdir(parents=True, exist_ok=True)
     returns.to_csv(csv_file, index=False)
-    make_growth_plot(returns, plot_file, f"Growth of $1 by Asset Class: {variant.title_suffix}")
+    make_growth_plot(returns, plot_file, f"Real Growth of $1 by Asset Class: {variant.title_suffix}")
 
     print(f"Wrote {csv_file.relative_to(ROOT)} ({len(returns)} rows)")
     print(f"Wrote {plot_file.relative_to(ROOT)}")
@@ -141,7 +140,7 @@ def build_dataset(full_returns: pd.DataFrame, dataset: str) -> None:
 
 def main() -> None:
     args = parse_args()
-    full_returns = load_nominal_returns()
+    full_returns = load_real_returns()
     datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
 
     for dataset in datasets:

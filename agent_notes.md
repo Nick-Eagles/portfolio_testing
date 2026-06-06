@@ -23,9 +23,9 @@ Use `uv run python ...` for scripts and one-off console-style analysis.
 
 ## Data Extraction History
 
-The source Excel workbook lives in `data/`. It initially looked like sheet 5 might contain the desired series, but the correct direct source for asset-class nominal returns is the `Data_Series` sheet.
+The source Excel workbook lives in `data/`. It initially looked like sheet 5 might contain the desired series, but the correct direct source for asset-class returns is the `Data_Series` sheet.
 
-The workbook contains nominal returns for US stocks, US bonds, and Treasury bills. The clean extracted datasets cover:
+The project now uses real, inflation-adjusted returns for US stocks, US bonds, and Treasury bills. The clean extracted datasets cover:
 
 - full history: 1871-2025, 155 rows
 - 1927 onward: 1927-2025, 99 rows

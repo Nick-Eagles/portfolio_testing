@@ -12,11 +12,11 @@ The user's main goal is to develop a data-driven, general rule for constructing 
 
 The source workbook is `data/Backtest-Portfolio-returns-rev25c.xlsx`. The relevant sheet is `Data_Series`.
 
-The extracted nominal return columns are:
+The extracted real return columns are read from the `Inflation-adjusted` section:
 
-- `TSM (US)` -> `us_stocks_nominal_return_pct`
-- `TBM (US)` -> `us_bonds_nominal_return_pct`
-- `T-Bill` -> `treasury_bills_nominal_return_pct`
+- `TSM (US)` -> `us_stocks_real_return_pct`
+- `TBM (US)` -> `us_bonds_real_return_pct`
+- `T-Bill` -> `treasury_bills_real_return_pct`
 
 Use `engine="calamine"` when reading the workbook. `openpyxl` had trouble with the workbook stylesheet.
 
