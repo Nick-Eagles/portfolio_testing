@@ -5,6 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from compute_optimal_portfolio_summary import get_output_csv as get_tail_summary_csv
 from compute_optimal_portfolio_summary import load_returns
@@ -356,6 +357,47 @@ def plot_stable_path_with_hulls(
     plt.close(fig)
 
 
+def plot_selected_portfolio_expected_returns(
+    tail_summary: pd.DataFrame, output_dir: Path, dataset: str
+) -> None:
+    variant = get_dataset_variant(dataset)
+    feasible = compute_path_feasible_set(tail_summary)
+    path = compute_thresholded_lambda_path(feasible)
+    path["mean_annualized_return"] = path["mean_relative_return"] ** (
+        1 / path["horizon"]
+    )
+    smoothed = lowess(
+        endog=path["mean_annualized_return"],
+        exog=path["horizon"],
+        frac=0.28,
+        it=0,
+        return_sorted=True,
+    )
+    smoothed_percent = (smoothed[:, 1] - 1) * 100
+
+    fig, ax = plt.subplots(figsize=(10, 5.8), constrained_layout=True)
+    ax.plot(
+        smoothed[:, 0],
+        smoothed_percent,
+        color="black",
+        linewidth=2.3,
+    )
+
+    ax.set_title(
+        f"Expected Return Along the Stable q02 Path: {variant.title_suffix}",
+        fontweight="bold",
+        fontsize=15,
+    )
+    ax.set_xlabel("Horizon", fontsize=12)
+    ax.set_ylabel("Mean annualized return (%)", fontsize=12)
+    ax.set_xlim(path["horizon"].min(), path["horizon"].max())
+    ax.set_ylim(bottom=0)
+    ax.tick_params(axis="both", labelsize=11)
+    ax.grid(alpha=0.2)
+    fig.savefig(output_dir / "stable_path_expected_returns.pdf")
+    plt.close(fig)
+
+
 def compute_all_assets_vs_no_bonds(tail_summary: pd.DataFrame) -> pd.DataFrame:
     all_assets = (
         tail_summary.sort_values(
@@ -427,6 +469,7 @@ def run_dataset(dataset: str) -> None:
 
     plot_q02_surfaces(tail_summary, output_dir, dataset)
     plot_stable_path_with_hulls(tail_summary, output_dir, dataset)
+    plot_selected_portfolio_expected_returns(tail_summary, output_dir, dataset)
     plot_all_assets_vs_no_bonds(tail_summary, output_dir, dataset)
 
     print(f"\n{get_dataset_variant(dataset).label}")
