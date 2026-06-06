@@ -8,17 +8,14 @@ import pandas as pd
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from compute_optimal_portfolio_summary import get_output_csv as get_tail_summary_csv
-from compute_optimal_portfolio_summary import load_returns
-from compute_optimal_portfolio_summary import lower_quantile
 from compute_optimal_portfolio_summary import run_dataset as compute_summary_dataset
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
-from simulate_portfolio_returns import MAX_HORIZON, RETURN_COLUMNS, generate_portfolio_weights
+from simulate_portfolio_returns import MAX_HORIZON
 
 
 SELECTED_HORIZONS = [1, 5, 10, 20, 30, 40, 50]
-NEAR_OPTIMAL_RATIO = 0.99
-SECONDARY_QUANTILE = 0.10
-SECONDARY_TOP_QUANTILE = 0.75
+NEAR_OPTIMAL_EXCESS_RELATIVE_GAP = 0.05
+NEAR_OPTIMAL_ABSOLUTE_ANNUALIZED_GAP = 0.002
 PATH_SMOOTHNESS_LAMBDA = 0.05
 HORIZON_LABEL_OFFSETS = {
     1: (0.0, 0.04),
@@ -57,36 +54,6 @@ def load_tail_summary(dataset: str) -> pd.DataFrame:
     return pd.read_csv(tail_csv)
 
 
-def add_secondary_quantile_summary(tail_summary: pd.DataFrame, dataset: str) -> pd.DataFrame:
-    returns = load_returns(dataset)
-    weights = generate_portfolio_weights()
-    asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
-    weight_matrix = weights.to_numpy(dtype=float)
-    portfolio_count = len(weights)
-
-    annual_portfolio_returns = asset_returns @ weight_matrix.T
-    annual_growth = 1 + annual_portfolio_returns
-    cumulative_growth = np.vstack(
-        [np.ones((1, portfolio_count)), np.cumprod(annual_growth, axis=0)]
-    )
-
-    rows = []
-    for horizon in range(1, MAX_HORIZON + 1):
-        relative_returns = cumulative_growth[horizon:] / cumulative_growth[:-horizon]
-        quantile_values = lower_quantile(relative_returns, SECONDARY_QUANTILE)
-        horizon_rows = weights.copy()
-        horizon_rows["horizon"] = horizon
-        horizon_rows["q10_annualized_return"] = quantile_values ** (1 / horizon)
-        rows.append(horizon_rows)
-
-    secondary_summary = pd.concat(rows, ignore_index=True)
-    return tail_summary.merge(
-        secondary_summary,
-        on=["stock_weight", "bond_weight", "t_bill_weight", "horizon"],
-        how="left",
-    )
-
-
 def add_simplex_coordinates(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     result["simplex_x"] = 0.5 * result["stock_weight"] + result["t_bill_weight"]
@@ -122,6 +89,20 @@ def compute_convex_hull(points: np.ndarray) -> np.ndarray:
     return np.array(lower[:-1] + upper[:-1])
 
 
+def is_near_optimal_q02(frame: pd.DataFrame) -> pd.Series:
+    best_excess_return = frame["best_q02_annualized_return"] - 1
+    q02_excess_return = frame["q02_annualized_return"] - 1
+    excess_difference = (q02_excess_return - best_excess_return).abs()
+    relative_excess_gap = NEAR_OPTIMAL_EXCESS_RELATIVE_GAP * best_excess_return.abs()
+
+    return (
+        excess_difference <= relative_excess_gap
+    ) | (
+        frame["q02_annualized_return"]
+        >= frame["best_q02_annualized_return"] - NEAR_OPTIMAL_ABSOLUTE_ANNUALIZED_GAP
+    )
+
+
 def compute_path_feasible_set(tail_summary: pd.DataFrame) -> pd.DataFrame:
     best = (
         tail_summary.sort_values(
@@ -133,10 +114,7 @@ def compute_path_feasible_set(tail_summary: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"q02_annualized_return": "best_q02_annualized_return"})
     )
     near = tail_summary.merge(best, on="horizon")
-    near = near[
-        near["q02_annualized_return"]
-        >= near["best_q02_annualized_return"] * NEAR_OPTIMAL_RATIO
-    ].copy()
+    near = near[is_near_optimal_q02(near)].copy()
 
     rows = []
     for horizon, group in near.groupby("horizon"):
@@ -148,11 +126,7 @@ def compute_path_feasible_set(tail_summary: pd.DataFrame) -> pd.DataFrame:
                 ).head(1)
             )
             continue
-
-        secondary_threshold = group["q10_annualized_return"].quantile(
-            SECONDARY_TOP_QUANTILE
-        )
-        rows.append(group[group["q10_annualized_return"] >= secondary_threshold].copy())
+        rows.append(group)
 
     return add_simplex_coordinates(pd.concat(rows, ignore_index=True))
 
@@ -211,9 +185,10 @@ def compute_thresholded_lambda_path(feasible: pd.DataFrame) -> pd.DataFrame:
     )
     path = add_simplex_coordinates(path)
     path["path_smoothness_lambda"] = PATH_SMOOTHNESS_LAMBDA
-    path["near_optimal_ratio"] = NEAR_OPTIMAL_RATIO
-    path["secondary_quantile"] = SECONDARY_QUANTILE
-    path["secondary_top_quantile"] = SECONDARY_TOP_QUANTILE
+    path["near_optimal_excess_relative_gap"] = NEAR_OPTIMAL_EXCESS_RELATIVE_GAP
+    path["near_optimal_absolute_annualized_gap"] = (
+        NEAR_OPTIMAL_ABSOLUTE_ANNUALIZED_GAP
+    )
     path["prior_simplex_step_distance"] = np.nan
     path.loc[1:, "prior_simplex_step_distance"] = np.sqrt(
         np.diff(path["simplex_x"]) ** 2 + np.diff(path["simplex_y"]) ** 2
@@ -347,7 +322,7 @@ def plot_stable_path_with_hulls(
             zorder=5,
         )
     ax.set_title(
-        f"Stable q02 Path with q10-Feasible Hulls: {variant.title_suffix}",
+        f"Stable q02 Path with Near-Optimal Hulls: {variant.title_suffix}",
         fontsize=13,
         fontweight="bold",
     )
@@ -465,7 +440,7 @@ def run_dataset(dataset: str) -> None:
     output_dir = get_plot_dir(dataset)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tail_summary = add_secondary_quantile_summary(load_tail_summary(dataset), dataset)
+    tail_summary = load_tail_summary(dataset)
 
     plot_q02_surfaces(tail_summary, output_dir, dataset)
     plot_stable_path_with_hulls(tail_summary, output_dir, dataset)
