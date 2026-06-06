@@ -19,6 +19,15 @@ NEAR_OPTIMAL_RATIO = 0.99
 SECONDARY_QUANTILE = 0.10
 SECONDARY_TOP_QUANTILE = 0.75
 PATH_SMOOTHNESS_LAMBDA = 0.05
+HORIZON_LABEL_OFFSETS = {
+    1: (0.0, 0.04),
+    5: (0.035, 0.03),
+    10: (0.04, 0.0),
+    20: (0.04, -0.01),
+    30: (0.035, -0.025),
+    40: (-0.04, -0.02),
+    50: (-0.045, 0.025),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -221,9 +230,16 @@ def draw_simplex_outline(ax) -> None:
         ]
     )
     ax.plot(vertices[:, 0], vertices[:, 1], color="black", linewidth=0.8)
-    ax.text(0.0, -0.045, "100% Bonds", ha="center", va="top", fontsize=8)
-    ax.text(1.0, -0.045, "100% T-Bills", ha="center", va="top", fontsize=8)
-    ax.text(0.5, math.sqrt(3) / 2 + 0.035, "100% Stocks", ha="center", va="bottom", fontsize=8)
+    ax.text(0.0, -0.05, "100% Bonds", ha="center", va="top", fontsize=11)
+    ax.text(1.0, -0.05, "100% T-Bills", ha="center", va="top", fontsize=11)
+    ax.text(
+        0.5,
+        math.sqrt(3) / 2 + 0.04,
+        "100% Stocks",
+        ha="center",
+        va="bottom",
+        fontsize=11,
+    )
     ax.set_xlim(-0.08, 1.08)
     ax.set_ylim(-0.08, math.sqrt(3) / 2 + 0.08)
     ax.set_aspect("equal")
@@ -318,11 +334,12 @@ def plot_stable_path_with_hulls(
     )
     for horizon in SELECTED_HORIZONS:
         row = path[path["horizon"] == horizon].iloc[0]
+        x_offset, y_offset = HORIZON_LABEL_OFFSETS.get(horizon, (0.03, 0.03))
         ax.text(
-            row["simplex_x"],
-            row["simplex_y"],
+            row["simplex_x"] + x_offset,
+            row["simplex_y"] + y_offset,
             str(horizon),
-            fontsize=8,
+            fontsize=11,
             ha="center",
             va="center",
             zorder=5,
