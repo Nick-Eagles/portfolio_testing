@@ -7,12 +7,17 @@ import numpy as np
 import pandas as pd
 
 from compute_optimal_portfolio_summary import get_output_csv as get_tail_summary_csv
+from compute_optimal_portfolio_summary import load_returns
+from compute_optimal_portfolio_summary import lower_quantile
 from compute_optimal_portfolio_summary import run_dataset as compute_summary_dataset
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from simulate_portfolio_returns import MAX_HORIZON, RETURN_COLUMNS, generate_portfolio_weights
 
 
 SELECTED_HORIZONS = [1, 5, 10, 20, 30, 40, 50]
 NEAR_OPTIMAL_RATIO = 0.99
+SECONDARY_QUANTILE = 0.10
+SECONDARY_TOP_QUANTILE = 0.75
 PATH_SMOOTHNESS_LAMBDA = 0.05
 
 
@@ -40,6 +45,36 @@ def load_tail_summary(dataset: str) -> pd.DataFrame:
     if not tail_csv.exists():
         compute_summary_dataset(dataset)
     return pd.read_csv(tail_csv)
+
+
+def add_secondary_quantile_summary(tail_summary: pd.DataFrame, dataset: str) -> pd.DataFrame:
+    returns = load_returns(dataset)
+    weights = generate_portfolio_weights()
+    asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
+    weight_matrix = weights.to_numpy(dtype=float)
+    portfolio_count = len(weights)
+
+    annual_portfolio_returns = asset_returns @ weight_matrix.T
+    annual_growth = 1 + annual_portfolio_returns
+    cumulative_growth = np.vstack(
+        [np.ones((1, portfolio_count)), np.cumprod(annual_growth, axis=0)]
+    )
+
+    rows = []
+    for horizon in range(1, MAX_HORIZON + 1):
+        relative_returns = cumulative_growth[horizon:] / cumulative_growth[:-horizon]
+        quantile_values = lower_quantile(relative_returns, SECONDARY_QUANTILE)
+        horizon_rows = weights.copy()
+        horizon_rows["horizon"] = horizon
+        horizon_rows["q10_annualized_return"] = quantile_values ** (1 / horizon)
+        rows.append(horizon_rows)
+
+    secondary_summary = pd.concat(rows, ignore_index=True)
+    return tail_summary.merge(
+        secondary_summary,
+        on=["stock_weight", "bond_weight", "t_bill_weight", "horizon"],
+        how="left",
+    )
 
 
 def add_simplex_coordinates(frame: pd.DataFrame) -> pd.DataFrame:
@@ -77,71 +112,84 @@ def compute_convex_hull(points: np.ndarray) -> np.ndarray:
     return np.array(lower[:-1] + upper[:-1])
 
 
-def compute_thresholded_lambda_path(tail_summary: pd.DataFrame) -> pd.DataFrame:
-    sorted_summary = tail_summary.sort_values(
+def compute_path_feasible_set(tail_summary: pd.DataFrame) -> pd.DataFrame:
+    best = (
+        tail_summary.sort_values(
+            ["horizon", "q02_annualized_return", "median_relative_return"],
+            ascending=[True, False, False],
+        )
+        .groupby("horizon", as_index=False)
+        .head(1)[["horizon", "q02_annualized_return"]]
+        .rename(columns={"q02_annualized_return": "best_q02_annualized_return"})
+    )
+    near = tail_summary.merge(best, on="horizon")
+    near = near[
+        near["q02_annualized_return"]
+        >= near["best_q02_annualized_return"] * NEAR_OPTIMAL_RATIO
+    ].copy()
+
+    rows = []
+    for horizon, group in near.groupby("horizon"):
+        if horizon in (1, MAX_HORIZON):
+            rows.append(
+                group.sort_values(
+                    ["q02_annualized_return", "median_relative_return"],
+                    ascending=[False, False],
+                ).head(1)
+            )
+            continue
+
+        secondary_threshold = group["q10_annualized_return"].quantile(
+            SECONDARY_TOP_QUANTILE
+        )
+        rows.append(group[group["q10_annualized_return"] >= secondary_threshold].copy())
+
+    return add_simplex_coordinates(pd.concat(rows, ignore_index=True))
+
+
+def compute_thresholded_lambda_path(feasible: pd.DataFrame) -> pd.DataFrame:
+    sorted_feasible = feasible.sort_values(
         ["horizon", "stock_weight", "bond_weight", "t_bill_weight"]
     ).reset_index(drop=True)
-    horizons = sorted_summary["horizon"].drop_duplicates().to_numpy()
-    first_horizon = sorted_summary[sorted_summary["horizon"] == horizons[0]].copy()
-    portfolio_keys = ["stock_weight", "bond_weight", "t_bill_weight"]
+    horizons = sorted_feasible["horizon"].drop_duplicates().to_numpy()
 
-    simplex = add_simplex_coordinates(first_horizon)[
-        ["simplex_x", "simplex_y"]
-    ].to_numpy()
-    distances = np.sqrt(
-        (simplex[:, None, 0] - simplex[None, :, 0]) ** 2
-        + (simplex[:, None, 1] - simplex[None, :, 1]) ** 2
-    )
-
-    scores_by_horizon = []
     frames_by_horizon = []
-    allowed_by_horizon = []
+    scores_by_horizon = []
+    coords_by_horizon = []
     for horizon in horizons:
-        frame = sorted_summary[sorted_summary["horizon"] == horizon].reset_index(drop=True)
-        if not frame[portfolio_keys].equals(
-            first_horizon[portfolio_keys].reset_index(drop=True)
-        ):
-            raise ValueError(
-                "Portfolio grid differs across horizons; cannot compute one smooth path."
-            )
-        scores = frame["q02_annualized_return"].to_numpy()
+        frame = sorted_feasible[sorted_feasible["horizon"] == horizon].reset_index(
+            drop=True
+        )
         frames_by_horizon.append(frame)
-        scores_by_horizon.append(scores)
-        allowed_by_horizon.append(scores >= scores.max() * NEAR_OPTIMAL_RATIO)
+        scores_by_horizon.append(frame["q02_annualized_return"].to_numpy())
+        coords_by_horizon.append(frame[["simplex_x", "simplex_y"]].to_numpy())
 
-    first_anchor = int(np.argmax(scores_by_horizon[0]))
-    last_anchor = int(np.argmax(scores_by_horizon[-1]))
-    portfolio_count = len(first_horizon)
-
-    cumulative_score = np.full(portfolio_count, -np.inf)
-    cumulative_score[first_anchor] = scores_by_horizon[0][first_anchor]
-    backpointers = np.full((len(horizons), portfolio_count), -1, dtype=np.int32)
+    cumulative_score = scores_by_horizon[0].copy()
+    backpointers = [np.full(len(scores_by_horizon[0]), -1, dtype=np.int32)]
 
     for horizon_index in range(1, len(horizons)):
-        allowed = allowed_by_horizon[horizon_index].copy()
-        if horizon_index == len(horizons) - 1:
-            allowed[:] = False
-            allowed[last_anchor] = True
-
+        prior_coords = coords_by_horizon[horizon_index - 1]
+        current_coords = coords_by_horizon[horizon_index]
+        distances = np.sqrt(
+            (prior_coords[:, None, 0] - current_coords[None, :, 0]) ** 2
+            + (prior_coords[:, None, 1] - current_coords[None, :, 1]) ** 2
+        )
         transition_scores = (
             cumulative_score[:, None]
             - PATH_SMOOTHNESS_LAMBDA * distances
             + scores_by_horizon[horizon_index][None, :]
         )
-        transition_scores[:, ~allowed] = -np.inf
-        backpointers[horizon_index] = np.argmax(transition_scores, axis=0)
+        best_prior = np.argmax(transition_scores, axis=0)
+        backpointers.append(best_prior.astype(np.int32))
         cumulative_score = transition_scores[
-            backpointers[horizon_index], np.arange(portfolio_count)
+            best_prior, np.arange(len(current_coords))
         ]
 
-    if not np.isfinite(cumulative_score[last_anchor]):
-        raise ValueError("No fixed-endpoint path exists within the near-optimal threshold.")
-
     path_indices = np.zeros(len(horizons), dtype=np.int32)
-    path_indices[-1] = last_anchor
+    path_indices[-1] = int(np.argmax(cumulative_score))
     for horizon_index in range(len(horizons) - 1, 0, -1):
-        path_indices[horizon_index - 1] = backpointers[
-            horizon_index, path_indices[horizon_index]
+        path_indices[horizon_index - 1] = backpointers[horizon_index][
+            path_indices[horizon_index]
         ]
 
     path = pd.concat(
@@ -154,6 +202,8 @@ def compute_thresholded_lambda_path(tail_summary: pd.DataFrame) -> pd.DataFrame:
     path = add_simplex_coordinates(path)
     path["path_smoothness_lambda"] = PATH_SMOOTHNESS_LAMBDA
     path["near_optimal_ratio"] = NEAR_OPTIMAL_RATIO
+    path["secondary_quantile"] = SECONDARY_QUANTILE
+    path["secondary_top_quantile"] = SECONDARY_TOP_QUANTILE
     path["prior_simplex_step_distance"] = np.nan
     path.loc[1:, "prior_simplex_step_distance"] = np.sqrt(
         np.diff(path["simplex_x"]) ** 2 + np.diff(path["simplex_y"]) ** 2
@@ -213,31 +263,19 @@ def plot_stable_path_with_hulls(
     tail_summary: pd.DataFrame, output_dir: Path, dataset: str
 ) -> None:
     variant = get_dataset_variant(dataset)
-    coords = add_simplex_coordinates(tail_summary)
-    path = compute_thresholded_lambda_path(tail_summary)
-    best = (
-        tail_summary.sort_values(
-            ["horizon", "q02_annualized_return", "median_relative_return"],
-            ascending=[True, False, False],
-        )
-        .groupby("horizon", as_index=False)
-        .head(1)[["horizon", "q02_annualized_return"]]
-        .rename(columns={"q02_annualized_return": "best_q02_annualized_return"})
-    )
-    near = coords.merge(best, on="horizon")
-    near = near[
-        near["q02_annualized_return"]
-        >= near["best_q02_annualized_return"] * NEAR_OPTIMAL_RATIO
-    ]
+    feasible = compute_path_feasible_set(tail_summary)
+    path = compute_thresholded_lambda_path(feasible)
 
     fig, ax = plt.subplots(figsize=(9, 8), constrained_layout=True)
     draw_simplex_outline(ax)
     cmap = plt.get_cmap("viridis")
     norm = plt.Normalize(path["horizon"].min(), path["horizon"].max())
 
-    for horizon in SELECTED_HORIZONS:
-        horizon_near = near[near["horizon"] == horizon]
-        hull = compute_convex_hull(horizon_near[["simplex_x", "simplex_y"]].to_numpy())
+    for horizon in range(1, MAX_HORIZON + 1):
+        horizon_feasible = feasible[feasible["horizon"] == horizon]
+        hull = compute_convex_hull(
+            horizon_feasible[["simplex_x", "simplex_y"]].to_numpy()
+        )
         color = cmap(norm(horizon))
         if len(hull) >= 3:
             ax.fill(
@@ -245,8 +283,8 @@ def plot_stable_path_with_hulls(
                 hull[:, 1],
                 facecolor=color,
                 edgecolor=color,
-                linewidth=1.0,
-                alpha=0.18,
+                linewidth=0.6,
+                alpha=0.08,
                 zorder=1,
             )
         elif len(hull) > 0:
@@ -254,8 +292,8 @@ def plot_stable_path_with_hulls(
                 hull[:, 0],
                 hull[:, 1],
                 color=color,
-                s=28,
-                alpha=0.35,
+                s=20,
+                alpha=0.2,
                 linewidths=0,
                 zorder=1,
             )
@@ -290,7 +328,7 @@ def plot_stable_path_with_hulls(
             zorder=5,
         )
     ax.set_title(
-        f"Thresholded Stable q02 Path with 99% Hulls: {variant.title_suffix}",
+        f"Stable q02 Path with q10-Feasible Hulls: {variant.title_suffix}",
         fontsize=13,
         fontweight="bold",
     )
@@ -367,7 +405,7 @@ def run_dataset(dataset: str) -> None:
     output_dir = get_plot_dir(dataset)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tail_summary = load_tail_summary(dataset)
+    tail_summary = add_secondary_quantile_summary(load_tail_summary(dataset), dataset)
 
     plot_q02_surfaces(tail_summary, output_dir, dataset)
     plot_stable_path_with_hulls(tail_summary, output_dir, dataset)
