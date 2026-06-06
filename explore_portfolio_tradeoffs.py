@@ -322,12 +322,13 @@ def plot_stable_path_with_hulls(
         alpha=0.9,
         zorder=3,
     )
+    highlighted = path[path["horizon"].isin(SELECTED_HORIZONS)].copy()
     scatter = ax.scatter(
-        path["simplex_x"],
-        path["simplex_y"],
-        c=path["horizon"],
+        highlighted["simplex_x"],
+        highlighted["simplex_y"],
+        c=highlighted["horizon"],
         cmap="viridis",
-        s=35,
+        s=48,
         edgecolor="black",
         linewidth=0.4,
         zorder=4,
