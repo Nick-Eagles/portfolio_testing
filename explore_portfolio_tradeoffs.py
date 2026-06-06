@@ -6,8 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from analyze_optimal_portfolio_stability import get_output_csv as get_stability_csv
-from analyze_optimal_portfolio_stability import run_dataset as analyze_stability_dataset
 from compute_optimal_portfolio_summary import get_output_csv as get_tail_summary_csv
 from compute_optimal_portfolio_summary import run_dataset as compute_summary_dataset
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
@@ -15,6 +13,7 @@ from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 
 SELECTED_HORIZONS = [1, 5, 10, 20, 30, 40, 50]
 NEAR_OPTIMAL_RATIO = 0.99
+PATH_SMOOTHNESS_LAMBDA = 0.05
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,18 +42,123 @@ def load_tail_summary(dataset: str) -> pd.DataFrame:
     return pd.read_csv(tail_csv)
 
 
-def load_stability_summary(dataset: str) -> pd.DataFrame:
-    stability_csv = get_stability_csv(dataset)
-    if not stability_csv.exists():
-        analyze_stability_dataset(dataset, NEAR_OPTIMAL_RATIO)
-    return pd.read_csv(stability_csv)
-
-
 def add_simplex_coordinates(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     result["simplex_x"] = 0.5 * result["stock_weight"] + result["t_bill_weight"]
     result["simplex_y"] = (math.sqrt(3) / 2) * result["stock_weight"]
     return result
+
+
+def compute_convex_hull(points: np.ndarray) -> np.ndarray:
+    unique_points = np.unique(points, axis=0)
+    if len(unique_points) <= 2:
+        return unique_points
+
+    ordered = unique_points[np.lexsort((unique_points[:, 1], unique_points[:, 0]))]
+
+    def cross(origin: np.ndarray, left: np.ndarray, right: np.ndarray) -> float:
+        return (
+            (left[0] - origin[0]) * (right[1] - origin[1])
+            - (left[1] - origin[1]) * (right[0] - origin[0])
+        )
+
+    lower: list[np.ndarray] = []
+    for point in ordered:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+
+    upper: list[np.ndarray] = []
+    for point in ordered[::-1]:
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+
+    return np.array(lower[:-1] + upper[:-1])
+
+
+def compute_thresholded_lambda_path(tail_summary: pd.DataFrame) -> pd.DataFrame:
+    sorted_summary = tail_summary.sort_values(
+        ["horizon", "stock_weight", "bond_weight", "t_bill_weight"]
+    ).reset_index(drop=True)
+    horizons = sorted_summary["horizon"].drop_duplicates().to_numpy()
+    first_horizon = sorted_summary[sorted_summary["horizon"] == horizons[0]].copy()
+    portfolio_keys = ["stock_weight", "bond_weight", "t_bill_weight"]
+
+    simplex = add_simplex_coordinates(first_horizon)[
+        ["simplex_x", "simplex_y"]
+    ].to_numpy()
+    distances = np.sqrt(
+        (simplex[:, None, 0] - simplex[None, :, 0]) ** 2
+        + (simplex[:, None, 1] - simplex[None, :, 1]) ** 2
+    )
+
+    scores_by_horizon = []
+    frames_by_horizon = []
+    allowed_by_horizon = []
+    for horizon in horizons:
+        frame = sorted_summary[sorted_summary["horizon"] == horizon].reset_index(drop=True)
+        if not frame[portfolio_keys].equals(
+            first_horizon[portfolio_keys].reset_index(drop=True)
+        ):
+            raise ValueError(
+                "Portfolio grid differs across horizons; cannot compute one smooth path."
+            )
+        scores = frame["q02_annualized_return"].to_numpy()
+        frames_by_horizon.append(frame)
+        scores_by_horizon.append(scores)
+        allowed_by_horizon.append(scores >= scores.max() * NEAR_OPTIMAL_RATIO)
+
+    first_anchor = int(np.argmax(scores_by_horizon[0]))
+    last_anchor = int(np.argmax(scores_by_horizon[-1]))
+    portfolio_count = len(first_horizon)
+
+    cumulative_score = np.full(portfolio_count, -np.inf)
+    cumulative_score[first_anchor] = scores_by_horizon[0][first_anchor]
+    backpointers = np.full((len(horizons), portfolio_count), -1, dtype=np.int32)
+
+    for horizon_index in range(1, len(horizons)):
+        allowed = allowed_by_horizon[horizon_index].copy()
+        if horizon_index == len(horizons) - 1:
+            allowed[:] = False
+            allowed[last_anchor] = True
+
+        transition_scores = (
+            cumulative_score[:, None]
+            - PATH_SMOOTHNESS_LAMBDA * distances
+            + scores_by_horizon[horizon_index][None, :]
+        )
+        transition_scores[:, ~allowed] = -np.inf
+        backpointers[horizon_index] = np.argmax(transition_scores, axis=0)
+        cumulative_score = transition_scores[
+            backpointers[horizon_index], np.arange(portfolio_count)
+        ]
+
+    if not np.isfinite(cumulative_score[last_anchor]):
+        raise ValueError("No fixed-endpoint path exists within the near-optimal threshold.")
+
+    path_indices = np.zeros(len(horizons), dtype=np.int32)
+    path_indices[-1] = last_anchor
+    for horizon_index in range(len(horizons) - 1, 0, -1):
+        path_indices[horizon_index - 1] = backpointers[
+            horizon_index, path_indices[horizon_index]
+        ]
+
+    path = pd.concat(
+        [
+            frames_by_horizon[horizon_index].iloc[[path_indices[horizon_index]]]
+            for horizon_index in range(len(horizons))
+        ],
+        ignore_index=True,
+    )
+    path = add_simplex_coordinates(path)
+    path["path_smoothness_lambda"] = PATH_SMOOTHNESS_LAMBDA
+    path["near_optimal_ratio"] = NEAR_OPTIMAL_RATIO
+    path["prior_simplex_step_distance"] = np.nan
+    path.loc[1:, "prior_simplex_step_distance"] = np.sqrt(
+        np.diff(path["simplex_x"]) ** 2 + np.diff(path["simplex_y"]) ** 2
+    )
+    return path
 
 
 def draw_simplex_outline(ax) -> None:
@@ -105,12 +209,20 @@ def plot_q02_surfaces(tail_summary: pd.DataFrame, output_dir: Path, dataset: str
     plt.close(fig)
 
 
-def plot_path_and_near_optimal(tail_summary: pd.DataFrame, stability: pd.DataFrame, output_dir: Path, dataset: str) -> None:
+def plot_stable_path_with_hulls(
+    tail_summary: pd.DataFrame, output_dir: Path, dataset: str
+) -> None:
     variant = get_dataset_variant(dataset)
     coords = add_simplex_coordinates(tail_summary)
-    path = add_simplex_coordinates(stability)
-    best = stability[["horizon", "q02_annualized_return"]].rename(
-        columns={"q02_annualized_return": "best_q02_annualized_return"}
+    path = compute_thresholded_lambda_path(tail_summary)
+    best = (
+        tail_summary.sort_values(
+            ["horizon", "q02_annualized_return", "median_relative_return"],
+            ascending=[True, False, False],
+        )
+        .groupby("horizon", as_index=False)
+        .head(1)[["horizon", "q02_annualized_return"]]
+        .rename(columns={"q02_annualized_return": "best_q02_annualized_return"})
     )
     near = coords.merge(best, on="horizon")
     near = near[
@@ -120,17 +232,43 @@ def plot_path_and_near_optimal(tail_summary: pd.DataFrame, stability: pd.DataFra
 
     fig, ax = plt.subplots(figsize=(9, 8), constrained_layout=True)
     draw_simplex_outline(ax)
-    scatter = ax.scatter(
-        near["simplex_x"],
-        near["simplex_y"],
-        c=near["horizon"],
-        cmap="viridis",
-        s=5,
-        alpha=0.18,
-        linewidths=0,
+    cmap = plt.get_cmap("viridis")
+    norm = plt.Normalize(path["horizon"].min(), path["horizon"].max())
+
+    for horizon in SELECTED_HORIZONS:
+        horizon_near = near[near["horizon"] == horizon]
+        hull = compute_convex_hull(horizon_near[["simplex_x", "simplex_y"]].to_numpy())
+        color = cmap(norm(horizon))
+        if len(hull) >= 3:
+            ax.fill(
+                hull[:, 0],
+                hull[:, 1],
+                facecolor=color,
+                edgecolor=color,
+                linewidth=1.0,
+                alpha=0.18,
+                zorder=1,
+            )
+        elif len(hull) > 0:
+            ax.scatter(
+                hull[:, 0],
+                hull[:, 1],
+                color=color,
+                s=28,
+                alpha=0.35,
+                linewidths=0,
+                zorder=1,
+            )
+
+    ax.plot(
+        path["simplex_x"],
+        path["simplex_y"],
+        color="black",
+        linewidth=1.8,
+        alpha=0.9,
+        zorder=3,
     )
-    ax.plot(path["simplex_x"], path["simplex_y"], color="black", linewidth=1.2, alpha=0.85)
-    ax.scatter(
+    scatter = ax.scatter(
         path["simplex_x"],
         path["simplex_y"],
         c=path["horizon"],
@@ -138,14 +276,27 @@ def plot_path_and_near_optimal(tail_summary: pd.DataFrame, stability: pd.DataFra
         s=35,
         edgecolor="black",
         linewidth=0.4,
+        zorder=4,
     )
     for horizon in SELECTED_HORIZONS:
         row = path[path["horizon"] == horizon].iloc[0]
-        ax.text(row["simplex_x"], row["simplex_y"], str(horizon), fontsize=8, ha="center", va="center")
-    ax.set_title(f"Optimal Path and 99% Near-Optimal Cloud: {variant.title_suffix}", fontsize=13, fontweight="bold")
+        ax.text(
+            row["simplex_x"],
+            row["simplex_y"],
+            str(horizon),
+            fontsize=8,
+            ha="center",
+            va="center",
+            zorder=5,
+        )
+    ax.set_title(
+        f"Thresholded Stable q02 Path with 99% Hulls: {variant.title_suffix}",
+        fontsize=13,
+        fontweight="bold",
+    )
     colorbar = fig.colorbar(scatter, ax=ax, fraction=0.035, pad=0.02)
     colorbar.set_label("Horizon")
-    fig.savefig(output_dir / "optimal_path_near_optimal_cloud.pdf")
+    fig.savefig(output_dir / "stable_path_hulls.pdf")
     plt.close(fig)
 
 
@@ -217,10 +368,9 @@ def run_dataset(dataset: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     tail_summary = load_tail_summary(dataset)
-    stability = load_stability_summary(dataset)
 
     plot_q02_surfaces(tail_summary, output_dir, dataset)
-    plot_path_and_near_optimal(tail_summary, stability, output_dir, dataset)
+    plot_stable_path_with_hulls(tail_summary, output_dir, dataset)
     plot_all_assets_vs_no_bonds(tail_summary, output_dir, dataset)
 
     print(f"\n{get_dataset_variant(dataset).label}")
