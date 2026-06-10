@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 PLOTS_DIR = ROOT / "plots"
+ROLLING_WINDOWS_DATA_DIR = DATA_DIR / "rolling_windows"
+ROLLING_WINDOWS_PLOTS_DIR = PLOTS_DIR / "rolling_windows"
 WORKBOOK = DATA_DIR / "Backtest-Portfolio-returns-rev25c.xlsx"
 
 
@@ -17,11 +19,11 @@ class DatasetVariant:
 
     @property
     def data_dir(self) -> Path:
-        return DATA_DIR / self.key
+        return ROLLING_WINDOWS_DATA_DIR / self.key
 
     @property
     def plots_dir(self) -> Path:
-        return PLOTS_DIR / self.key
+        return ROLLING_WINDOWS_PLOTS_DIR / self.key
 
 
 DATASET_VARIANTS = {

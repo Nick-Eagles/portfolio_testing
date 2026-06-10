@@ -32,15 +32,15 @@ The project now uses real, inflation-adjusted returns for US stocks, US bonds, a
 
 The project now keeps dataset-specific outputs in:
 
-- `data/full_history/`
-- `data/from_1927/`
-- `plots/full_history/`
-- `plots/from_1927/`
+- `data/rolling_windows/full_history/`
+- `data/rolling_windows/from_1927/`
+- `plots/rolling_windows/full_history/`
+- `plots/rolling_windows/from_1927/`
 
 The initial growth-of-$1 plots use log10 y-axis scaling and are saved as:
 
-- `plots/full_history/asset_class_line_plot.pdf`
-- `plots/from_1927/asset_class_line_plot.pdf`
+- `plots/rolling_windows/full_history/asset_class_line_plot.pdf`
+- `plots/rolling_windows/from_1927/asset_class_line_plot.pdf`
 
 ## Simulation Design
 
@@ -64,7 +64,7 @@ The full simulation output has columns:
 
 The full simulation file is large, so it is written as:
 
-- `data/<dataset>/portfolio_return_simulations.csv.gz`
+- `data/rolling_windows/<dataset>/portfolio_return_simulations.csv.gz`
 
 ## Streaming and Temporary Files
 
@@ -110,7 +110,7 @@ The pure-asset EDA script writes:
 - `pure_assets_quantile_ribbons.pdf`
 - `pure_assets_quantile_heatmaps.pdf`
 
-under `plots/<dataset>/pure_asset_EDA/`.
+under `plots/rolling_windows/<dataset>/pure_asset_EDA/`.
 
 The plot smoothing discussion settled on local smoothing behavior that was less coarse at short horizons. Ribbon plots eventually had points removed, black smoothed lines, and colored ribbons.
 
