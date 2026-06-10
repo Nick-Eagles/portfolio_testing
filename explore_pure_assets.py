@@ -20,7 +20,7 @@ from plotnine import (
     theme_minimal,
 )
 
-from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from dataset_variants import DATASET_VARIANTS, DATA_DIR, PLOTS_DIR, ROOT, get_dataset_variant
 
 
 PURE_ASSET_MAP = {
@@ -35,15 +35,12 @@ ASSET_COLORS = {
     "US Bonds": "#386cb0",
     "Treasury Bills": "#d95f02",
 }
-BAND_COLORS = {
-    "0.01 to 0.02": "#d73027",
-    "0.02 to 0.05": "#fc8d59",
-    "0.05 to 0.10": "#fee08b",
-}
 RIBBON_QUANTILES = [0.01, 0.02, 0.05, 0.10]
 HEATMAP_QUANTILES = [quantile / 100 for quantile in range(1, 11)]
 LOWESS_FRACTION = 0.10
 SMOOTH_GRID_POINTS = 300
+APPROACHES = ("rolling_windows", "block_bootstrap")
+BLOCK_BOOTSTRAP_PURE_ASSET_BLOCK_LENGTH = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,18 +51,32 @@ def parse_args() -> argparse.Namespace:
         default="from_1927",
         help="Dataset variant to generate.",
     )
+    parser.add_argument(
+        "--approach",
+        choices=APPROACHES,
+        default="rolling_windows",
+        help="Return-generation approach to visualize.",
+    )
     return parser.parse_args()
-
-
-def get_simulation_csv(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "portfolio_return_simulations.csv.gz"
 
 
 def get_asset_returns_csv(dataset: str) -> Path:
     return get_dataset_variant(dataset).data_dir / "asset_class_real_returns.csv"
 
 
-def get_plot_paths(dataset: str) -> tuple[Path, Path, Path]:
+def get_block_summary_parquet(dataset: str) -> Path:
+    return DATA_DIR / "block_bootstrap" / dataset / "portfolio_return_bootstrap_summary.parquet"
+
+
+def get_q02_plot_path(dataset: str, approach: str) -> Path:
+    if approach == "rolling_windows":
+        base_dir = get_dataset_variant(dataset).plots_dir / "pure_asset_EDA"
+    else:
+        base_dir = PLOTS_DIR / "block_bootstrap" / dataset / "pure_asset_EDA"
+    return base_dir / "pure_assets_q02_line_plot.pdf"
+
+
+def get_rolling_windows_plot_paths(dataset: str) -> tuple[Path, Path, Path]:
     base_dir = get_dataset_variant(dataset).plots_dir / "pure_asset_EDA"
     return (
         base_dir / "pure_assets_q02_line_plot.pdf",
@@ -113,6 +124,50 @@ def load_pure_asset_returns(dataset: str) -> pd.DataFrame:
 
 def annualize_relative_return(relative_return: float, horizon: int) -> float:
     return relative_return ** (1 / horizon)
+
+
+def make_rolling_windows_summary(dataset: str) -> pd.DataFrame:
+    pure = load_pure_asset_returns(dataset)
+    return make_lower_quantile_summary(pure)
+
+
+def make_block_bootstrap_summary(dataset: str) -> pd.DataFrame:
+    summary_parquet = get_block_summary_parquet(dataset)
+    if not summary_parquet.exists():
+        raise FileNotFoundError(
+            f"Missing bootstrap summary: {summary_parquet}. Run simulate_block_bootstrap_returns.py first."
+        )
+
+    summary = pd.read_parquet(summary_parquet)
+    pure = summary[
+        (summary["block_length"] == BLOCK_BOOTSTRAP_PURE_ASSET_BLOCK_LENGTH)
+        & (
+            ((summary["stock_weight"] == 1.0) & (summary["bond_weight"] == 0.0) & (summary["t_bill_weight"] == 0.0))
+            | ((summary["stock_weight"] == 0.0) & (summary["bond_weight"] == 1.0) & (summary["t_bill_weight"] == 0.0))
+            | ((summary["stock_weight"] == 0.0) & (summary["bond_weight"] == 0.0) & (summary["t_bill_weight"] == 1.0))
+        )
+    ].copy()
+
+    pure["asset_class"] = list(
+        map(
+            PURE_ASSET_MAP.get,
+            zip(pure["stock_weight"], pure["bond_weight"], pure["t_bill_weight"], strict=True),
+        )
+    )
+    if pure["asset_class"].isna().any():
+        raise ValueError("Unexpected pure-asset weights in bootstrap summary.")
+
+    pure["observations"] = pure["num_simulations"]
+    pure["q02_annualized"] = pure["q02"] + 1
+
+    return pure[
+        [
+            "asset_class",
+            "horizon",
+            "observations",
+            "q02_annualized",
+        ]
+    ].sort_values(["asset_class", "horizon"]).reset_index(drop=True)
 
 
 def make_lower_quantile_summary(pure: pd.DataFrame) -> pd.DataFrame:
@@ -164,8 +219,18 @@ def smooth_curve(frame: pd.DataFrame, y_column: str) -> pd.DataFrame:
     )
 
 
-def make_q02_line_plot(summary: pd.DataFrame, plot_file: Path, dataset: str) -> None:
+def get_plot_context(dataset: str, approach: str) -> tuple[str, str]:
     variant = get_dataset_variant(dataset)
+    if approach == "rolling_windows":
+        return variant.title_suffix, "Points are lower-interpolation quantiles; lines use local smoothing"
+    return (
+        f"{variant.title_suffix}, Block Bootstrap (L={BLOCK_BOOTSTRAP_PURE_ASSET_BLOCK_LENGTH})",
+        "Points summarize 50,000 stationary block-bootstrap simulations; lines use local smoothing",
+    )
+
+
+def make_q02_line_plot(summary: pd.DataFrame, plot_file: Path, dataset: str, approach: str) -> None:
+    title_suffix, subtitle = get_plot_context(dataset, approach)
     line_points = summary[["asset_class", "horizon", "q02_annualized"]].copy()
     smooth_lines = pd.concat(
         [smooth_curve(group, "q02_annualized") for _, group in line_points.groupby("asset_class")],
@@ -187,8 +252,8 @@ def make_q02_line_plot(summary: pd.DataFrame, plot_file: Path, dataset: str) -> 
         )
         + scale_color_manual(values=ASSET_COLORS)
         + labs(
-            title=f"Pure Assets: q=0.02 Annualized Tail Curve ({variant.title_suffix})",
-            subtitle="Points are lower-interpolation quantiles; lines use local smoothing",
+            title=f"Pure Assets: q=0.02 Annualized Tail Curve ({title_suffix})",
+            subtitle=subtitle,
             x="Time horizon (years)",
             y="Annualized relative return",
             color="Asset class",
@@ -259,7 +324,7 @@ def make_quantile_ribbon_plot(summary: pd.DataFrame, plot_file: Path, dataset: s
             color="black",
         )
         + facet_wrap("~ asset_class", scales="free_y", ncol=1)
-        + scale_fill_manual(values=BAND_COLORS)
+        + scale_fill_manual(values={"0.01 to 0.02": "#d73027", "0.02 to 0.05": "#fc8d59", "0.05 to 0.10": "#fee08b"})
         + labs(
             title=f"Pure Assets: Tail-Quantile Sensitivity ({variant.title_suffix})",
             subtitle="Ribbons and line use lower-interpolation quantiles with local smoothing",
@@ -327,26 +392,32 @@ def make_heatmaps(summary: pd.DataFrame, plot_file: Path, dataset: str) -> None:
     plt.close(fig)
 
 
-def run_dataset(dataset: str) -> None:
-    pure = load_pure_asset_returns(dataset)
-    summary = make_lower_quantile_summary(pure)
-    q02_plot, ribbon_plot, heatmap_plot = get_plot_paths(dataset)
-    q02_plot.parent.mkdir(parents=True, exist_ok=True)
+def run_dataset(dataset: str, approach: str) -> None:
+    if approach == "rolling_windows":
+        summary = make_rolling_windows_summary(dataset)
+        q02_plot, ribbon_plot, heatmap_plot = get_rolling_windows_plot_paths(dataset)
+        q02_plot.parent.mkdir(parents=True, exist_ok=True)
 
-    make_q02_line_plot(summary, q02_plot, dataset)
-    make_quantile_ribbon_plot(summary, ribbon_plot, dataset)
-    make_heatmaps(summary, heatmap_plot, dataset)
+        make_q02_line_plot(summary, q02_plot, dataset, approach)
+        make_quantile_ribbon_plot(summary, ribbon_plot, dataset)
+        make_heatmaps(summary, heatmap_plot, dataset)
 
-    print(f"Wrote {q02_plot.relative_to(ROOT)}")
-    print(f"Wrote {ribbon_plot.relative_to(ROOT)}")
-    print(f"Wrote {heatmap_plot.relative_to(ROOT)}")
+        print(f"Wrote {q02_plot.relative_to(ROOT)}")
+        print(f"Wrote {ribbon_plot.relative_to(ROOT)}")
+        print(f"Wrote {heatmap_plot.relative_to(ROOT)}")
+    else:
+        summary = make_block_bootstrap_summary(dataset)
+        q02_plot = get_q02_plot_path(dataset, approach)
+        q02_plot.parent.mkdir(parents=True, exist_ok=True)
+        make_q02_line_plot(summary, q02_plot, dataset, approach)
+        print(f"Wrote {q02_plot.relative_to(ROOT)}")
 
 
 def main() -> None:
     args = parse_args()
     datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
     for dataset in datasets:
-        run_dataset(dataset)
+        run_dataset(dataset, args.approach)
 
 
 if __name__ == "__main__":
