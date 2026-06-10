@@ -6,10 +6,12 @@ import pandas as pd
 
 from compute_optimal_portfolio_summary import get_output_csv as get_tail_summary_csv
 from compute_optimal_portfolio_summary import run_dataset as compute_summary_dataset
-from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from dataset_variants import DATASET_VARIANTS, DATA_DIR, ROOT, get_dataset_variant
 
 
 NEAR_OPTIMAL_RATIO = 0.99
+APPROACHES = ("rolling_windows", "block_bootstrap")
+BLOCK_BOOTSTRAP_ANALYSIS_BLOCK_LENGTH = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,6 +23,12 @@ def parse_args() -> argparse.Namespace:
         help="Dataset variant to analyze.",
     )
     parser.add_argument(
+        "--approach",
+        choices=APPROACHES,
+        default="rolling_windows",
+        help="Return-generation approach to analyze.",
+    )
+    parser.add_argument(
         "--near-optimal-ratio",
         type=float,
         default=NEAR_OPTIMAL_RATIO,
@@ -29,15 +37,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_output_csv(dataset: str):
+def get_output_csv(dataset: str, approach: str = "rolling_windows"):
+    if approach == "block_bootstrap":
+        return DATA_DIR / "block_bootstrap" / dataset / "optimal_portfolio_stability_summary.csv"
     return get_dataset_variant(dataset).data_dir / "optimal_portfolio_stability_summary.csv"
 
 
-def load_tail_summary(dataset: str) -> pd.DataFrame:
-    input_csv = get_tail_summary_csv(dataset)
+def load_tail_summary(dataset: str, approach: str) -> pd.DataFrame:
+    input_csv = get_tail_summary_csv(dataset, approach)
     if not input_csv.exists():
-        compute_summary_dataset(dataset)
-    return pd.read_csv(input_csv)
+        compute_summary_dataset(dataset, approach)
+    tail_summary = pd.read_csv(input_csv)
+    if approach == "block_bootstrap":
+        tail_summary = tail_summary[
+            tail_summary["block_length"] == BLOCK_BOOTSTRAP_ANALYSIS_BLOCK_LENGTH
+        ].copy()
+        if tail_summary.empty:
+            raise ValueError(
+                f"No rows found for block_length={BLOCK_BOOTSTRAP_ANALYSIS_BLOCK_LENGTH} in {input_csv}."
+            )
+    return tail_summary
 
 
 def add_simplex_coordinates(frame: pd.DataFrame) -> pd.DataFrame:
@@ -135,10 +154,10 @@ def summarize_stability(optimal: pd.DataFrame, dataset: str, near_optimal_ratio:
     )
 
 
-def run_dataset(dataset: str, near_optimal_ratio: float) -> None:
-    tail_summary = load_tail_summary(dataset)
+def run_dataset(dataset: str, near_optimal_ratio: float, approach: str) -> None:
+    tail_summary = load_tail_summary(dataset, approach)
     optimal = choose_optimal_portfolios(tail_summary, near_optimal_ratio)
-    output_csv = get_output_csv(dataset)
+    output_csv = get_output_csv(dataset, approach)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     optimal.to_csv(output_csv, index=False)
 
@@ -150,7 +169,7 @@ def main() -> None:
     args = parse_args()
     datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
     for dataset in datasets:
-        run_dataset(dataset, args.near_optimal_ratio)
+        run_dataset(dataset, args.near_optimal_ratio, args.approach)
 
 
 if __name__ == "__main__":

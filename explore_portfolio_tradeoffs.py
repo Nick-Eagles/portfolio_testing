@@ -9,7 +9,7 @@ from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from compute_optimal_portfolio_summary import get_output_csv as get_tail_summary_csv
 from compute_optimal_portfolio_summary import run_dataset as compute_summary_dataset
-from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from dataset_variants import DATASET_VARIANTS, DATA_DIR, PLOTS_DIR, ROOT, get_dataset_variant
 from simulate_portfolio_returns import MAX_HORIZON
 
 
@@ -26,6 +26,8 @@ HORIZON_LABEL_OFFSETS = {
     40: (-0.04, -0.02),
     50: (-0.045, 0.025),
 }
+APPROACHES = ("rolling_windows", "block_bootstrap")
+BLOCK_BOOTSTRAP_PLOT_BLOCK_LENGTH = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,22 +38,41 @@ def parse_args() -> argparse.Namespace:
         default="from_1927",
         help="Dataset variant to plot.",
     )
+    parser.add_argument(
+        "--approach",
+        choices=APPROACHES,
+        default="rolling_windows",
+        help="Return-generation approach to plot.",
+    )
     return parser.parse_args()
 
 
-def get_plot_dir(dataset: str) -> Path:
+def get_plot_dir(dataset: str, approach: str) -> Path:
+    if approach == "block_bootstrap":
+        return PLOTS_DIR / "block_bootstrap" / dataset / "optimal_portfolio_patterns"
     return get_dataset_variant(dataset).plots_dir / "optimal_portfolio_patterns"
 
 
-def get_no_bonds_csv(dataset: str) -> Path:
+def get_no_bonds_csv(dataset: str, approach: str) -> Path:
+    if approach == "block_bootstrap":
+        return DATA_DIR / "block_bootstrap" / dataset / "all_assets_vs_no_bonds_q02_summary.csv"
     return get_dataset_variant(dataset).data_dir / "all_assets_vs_no_bonds_q02_summary.csv"
 
 
-def load_tail_summary(dataset: str) -> pd.DataFrame:
-    tail_csv = get_tail_summary_csv(dataset)
+def load_tail_summary(dataset: str, approach: str) -> pd.DataFrame:
+    tail_csv = get_tail_summary_csv(dataset, approach)
     if not tail_csv.exists():
-        compute_summary_dataset(dataset)
-    return pd.read_csv(tail_csv)
+        compute_summary_dataset(dataset, approach)
+    tail_summary = pd.read_csv(tail_csv)
+    if approach == "block_bootstrap":
+        tail_summary = tail_summary[
+            tail_summary["block_length"] == BLOCK_BOOTSTRAP_PLOT_BLOCK_LENGTH
+        ].copy()
+        if tail_summary.empty:
+            raise ValueError(
+                f"No rows found for block_length={BLOCK_BOOTSTRAP_PLOT_BLOCK_LENGTH} in {tail_csv}."
+            )
+    return tail_summary
 
 
 def add_simplex_coordinates(frame: pd.DataFrame) -> pd.DataFrame:
@@ -222,12 +243,19 @@ def draw_simplex_outline(ax) -> None:
     ax.axis("off")
 
 
-def plot_q02_surfaces(tail_summary: pd.DataFrame, output_dir: Path, dataset: str) -> None:
+def get_dataset_title_suffix(dataset: str, approach: str) -> str:
     variant = get_dataset_variant(dataset)
+    if approach == "block_bootstrap":
+        return f"{variant.title_suffix}, Block Bootstrap (L={BLOCK_BOOTSTRAP_PLOT_BLOCK_LENGTH})"
+    return variant.title_suffix
+
+
+def plot_q02_surfaces(tail_summary: pd.DataFrame, output_dir: Path, dataset: str, approach: str) -> None:
+    title_suffix = get_dataset_title_suffix(dataset, approach)
     coords = add_simplex_coordinates(tail_summary)
     fig, axes = plt.subplots(2, 4, figsize=(13, 7), constrained_layout=True)
     fig.suptitle(
-        f"q02 Annualized Return Surface: {variant.title_suffix}\nSeparate viridis scale per horizon",
+        f"q02 Annualized Return Surface: {title_suffix}\nSeparate viridis scale per horizon",
         fontsize=14,
         fontweight="bold",
     )
@@ -252,9 +280,9 @@ def plot_q02_surfaces(tail_summary: pd.DataFrame, output_dir: Path, dataset: str
 
 
 def plot_stable_path_with_hulls(
-    tail_summary: pd.DataFrame, output_dir: Path, dataset: str
+    tail_summary: pd.DataFrame, output_dir: Path, dataset: str, approach: str
 ) -> None:
-    variant = get_dataset_variant(dataset)
+    title_suffix = get_dataset_title_suffix(dataset, approach)
     feasible = compute_path_feasible_set(tail_summary)
     path = compute_thresholded_lambda_path(feasible)
 
@@ -322,7 +350,7 @@ def plot_stable_path_with_hulls(
             zorder=5,
         )
     ax.set_title(
-        f"Stable q02 Path with Near-Optimal Hulls: {variant.title_suffix}",
+        f"Stable q02 Path with Near-Optimal Hulls: {title_suffix}",
         fontsize=13,
         fontweight="bold",
     )
@@ -333,14 +361,12 @@ def plot_stable_path_with_hulls(
 
 
 def plot_selected_portfolio_expected_returns(
-    tail_summary: pd.DataFrame, output_dir: Path, dataset: str
+    tail_summary: pd.DataFrame, output_dir: Path, dataset: str, approach: str
 ) -> None:
-    variant = get_dataset_variant(dataset)
+    title_suffix = get_dataset_title_suffix(dataset, approach)
     feasible = compute_path_feasible_set(tail_summary)
     path = compute_thresholded_lambda_path(feasible)
-    path["mean_annualized_return"] = path["mean_relative_return"] ** (
-        1 / path["horizon"]
-    )
+    path["mean_annualized_return"] = np.power(path["mean_relative_return"], 1 / path["horizon"])
     smoothed = lowess(
         endog=path["mean_annualized_return"],
         exog=path["horizon"],
@@ -359,7 +385,7 @@ def plot_selected_portfolio_expected_returns(
     )
 
     ax.set_title(
-        f"Expected Return Along the Stable q02 Path: {variant.title_suffix}",
+        f"Expected Return Along the Stable q02 Path: {title_suffix}",
         fontweight="bold",
         fontsize=15,
     )
@@ -413,10 +439,12 @@ def compute_all_assets_vs_no_bonds(tail_summary: pd.DataFrame) -> pd.DataFrame:
     return comparison
 
 
-def plot_all_assets_vs_no_bonds(tail_summary: pd.DataFrame, output_dir: Path, dataset: str) -> None:
-    variant = get_dataset_variant(dataset)
+def plot_all_assets_vs_no_bonds(
+    tail_summary: pd.DataFrame, output_dir: Path, dataset: str, approach: str
+) -> None:
+    title_suffix = get_dataset_title_suffix(dataset, approach)
     comparison = compute_all_assets_vs_no_bonds(tail_summary)
-    comparison.to_csv(get_no_bonds_csv(dataset), index=False)
+    comparison.to_csv(get_no_bonds_csv(dataset, approach), index=False)
 
     fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
     ax.plot(comparison["horizon"], comparison["all_assets_q02"], label="All assets allowed", color="black", linewidth=1.8)
@@ -427,7 +455,7 @@ def plot_all_assets_vs_no_bonds(tail_summary: pd.DataFrame, output_dir: Path, da
         color="#1b9e77",
         linewidth=1.8,
     )
-    ax.set_title(f"Best q02 Annualized Return With vs Without Bonds: {variant.title_suffix}", fontweight="bold")
+    ax.set_title(f"Best q02 Annualized Return With vs Without Bonds: {title_suffix}", fontweight="bold")
     ax.set_xlabel("Horizon")
     ax.set_ylabel("Best q02 annualized relative return")
     ax.legend(loc="best")
@@ -436,28 +464,28 @@ def plot_all_assets_vs_no_bonds(tail_summary: pd.DataFrame, output_dir: Path, da
     plt.close(fig)
 
 
-def run_dataset(dataset: str) -> None:
-    output_dir = get_plot_dir(dataset)
+def run_dataset(dataset: str, approach: str) -> None:
+    output_dir = get_plot_dir(dataset, approach)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tail_summary = load_tail_summary(dataset)
+    tail_summary = load_tail_summary(dataset, approach)
 
-    plot_q02_surfaces(tail_summary, output_dir, dataset)
-    plot_stable_path_with_hulls(tail_summary, output_dir, dataset)
-    plot_selected_portfolio_expected_returns(tail_summary, output_dir, dataset)
-    plot_all_assets_vs_no_bonds(tail_summary, output_dir, dataset)
+    plot_q02_surfaces(tail_summary, output_dir, dataset, approach)
+    plot_stable_path_with_hulls(tail_summary, output_dir, dataset, approach)
+    plot_selected_portfolio_expected_returns(tail_summary, output_dir, dataset, approach)
+    plot_all_assets_vs_no_bonds(tail_summary, output_dir, dataset, approach)
 
     print(f"\n{get_dataset_variant(dataset).label}")
     print("-" * len(get_dataset_variant(dataset).label))
     print(f"Wrote plots under {output_dir.relative_to(ROOT)}")
-    print(f"Wrote {get_no_bonds_csv(dataset).relative_to(ROOT)}")
+    print(f"Wrote {get_no_bonds_csv(dataset, approach).relative_to(ROOT)}")
 
 
 def main() -> None:
     args = parse_args()
     datasets = DATASET_VARIANTS.keys() if args.dataset == "all" else [args.dataset]
     for dataset in datasets:
-        run_dataset(dataset)
+        run_dataset(dataset, args.approach)
 
 
 if __name__ == "__main__":
