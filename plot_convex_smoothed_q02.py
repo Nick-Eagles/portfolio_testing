@@ -255,11 +255,28 @@ def smooth_values(
 
 
 def choose_jointly_optimized_path(
+    raw: pd.DataFrame,
     predicted: pd.DataFrame,
     path_distance_lambda: float,
 ) -> pd.DataFrame:
     if path_distance_lambda < 0:
         raise ValueError("Path distance lambda must be non-negative.")
+
+    anchor = (
+        raw[raw["horizon"] == 1]
+        .sort_values(
+            [
+                "selected_annualized_return",
+                "stock_weight",
+                "bond_weight",
+                "t_bill_weight",
+            ],
+            ascending=[False, True, True, True],
+        )
+        .head(1)[["stock_weight", "bond_weight", "t_bill_weight"]]
+    )
+    if anchor.empty:
+        raise ValueError("Could not find a raw horizon-1 portfolio to anchor.")
 
     sorted_predicted = predicted.sort_values(
         ["horizon", "stock_weight", "bond_weight", "t_bill_weight"]
@@ -271,6 +288,14 @@ def choose_jointly_optimized_path(
     coords_by_horizon = []
     for horizon in horizons:
         frame = sorted_predicted[sorted_predicted["horizon"] == horizon].reset_index(drop=True)
+        if horizon == 1:
+            frame = frame.merge(
+                anchor,
+                on=["stock_weight", "bond_weight", "t_bill_weight"],
+                how="inner",
+            )
+            if len(frame) != 1:
+                raise ValueError("Expected exactly one anchored horizon-1 portfolio in the smoothed grid.")
         frame = add_simplex_coordinates(frame)
         frames_by_horizon.append(frame)
         scores_by_horizon.append(frame["smoothed_annualized_return"].to_numpy(dtype=float))
@@ -336,7 +361,7 @@ def make_subtitle(
     )
     return (
         f"Block bootstrap L={block_length}; convex Gaussian smoothing with "
-        f"{horizon_desc}, {portfolio_desc}"
+        f"{horizon_desc}, {portfolio_desc}; raw horizon 1 anchored"
     )
 
 
@@ -661,7 +686,7 @@ def main() -> None:
         args.no_horizon_smoothing,
         args.no_portfolio_smoothing,
     )
-    path = choose_jointly_optimized_path(predicted, args.path_distance_lambda)
+    path = choose_jointly_optimized_path(data, predicted, args.path_distance_lambda)
 
     output_dir = get_output_dir(args.dataset, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
