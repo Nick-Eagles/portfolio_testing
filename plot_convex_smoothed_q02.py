@@ -55,6 +55,16 @@ def parse_args() -> argparse.Namespace:
         help="Gaussian kernel bandwidth in simplex-coordinate units for smoothing portfolios within each horizon.",
     )
     parser.add_argument(
+        "--no-horizon-smoothing",
+        action="store_true",
+        help="Skip the across-horizon smoothing stage.",
+    )
+    parser.add_argument(
+        "--no-portfolio-smoothing",
+        action="store_true",
+        help="Skip the within-horizon across-portfolio smoothing stage.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -116,6 +126,10 @@ def gaussian_row_stochastic_weights(distances: np.ndarray, bandwidth: float) -> 
     return weights / row_sums
 
 
+def identity_weights(size: int) -> np.ndarray:
+    return np.eye(size, dtype=float)
+
+
 def build_value_matrix(data: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
     weights = (
         data[["stock_weight", "bond_weight", "t_bill_weight"]]
@@ -164,19 +178,27 @@ def smooth_values(
     data: pd.DataFrame,
     horizon_bandwidth: float,
     portfolio_bandwidth: float,
+    no_horizon_smoothing: bool,
+    no_portfolio_smoothing: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     weights, horizons, raw_values = build_value_matrix(data)
 
-    horizon_distances = np.abs(horizons[:, None] - horizons[None, :])
-    horizon_kernel = gaussian_row_stochastic_weights(horizon_distances, horizon_bandwidth)
+    if no_horizon_smoothing:
+        horizon_kernel = identity_weights(len(horizons))
+    else:
+        horizon_distances = np.abs(horizons[:, None] - horizons[None, :])
+        horizon_kernel = gaussian_row_stochastic_weights(horizon_distances, horizon_bandwidth)
     horizon_smoothed = raw_values @ horizon_kernel.T
 
     coords = add_simplex_coordinates(weights)[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
-    portfolio_distances = np.sqrt(
-        (coords[:, None, 0] - coords[None, :, 0]) ** 2
-        + (coords[:, None, 1] - coords[None, :, 1]) ** 2
-    )
-    portfolio_kernel = gaussian_row_stochastic_weights(portfolio_distances, portfolio_bandwidth)
+    if no_portfolio_smoothing:
+        portfolio_kernel = identity_weights(len(weights))
+    else:
+        portfolio_distances = np.sqrt(
+            (coords[:, None, 0] - coords[None, :, 0]) ** 2
+            + (coords[:, None, 1] - coords[None, :, 1]) ** 2
+        )
+        portfolio_kernel = gaussian_row_stochastic_weights(portfolio_distances, portfolio_bandwidth)
     smoothed = portfolio_kernel @ horizon_smoothed
 
     return (
@@ -205,10 +227,26 @@ def choose_smoothed_path(predicted: pd.DataFrame) -> pd.DataFrame:
     return add_simplex_coordinates(path)
 
 
-def make_subtitle(block_length: int, horizon_bandwidth: float, portfolio_bandwidth: float) -> str:
+def make_subtitle(
+    block_length: int,
+    horizon_bandwidth: float,
+    portfolio_bandwidth: float,
+    no_horizon_smoothing: bool,
+    no_portfolio_smoothing: bool,
+) -> str:
+    horizon_desc = (
+        "horizon smoothing off"
+        if no_horizon_smoothing
+        else f"horizon bandwidth={horizon_bandwidth:g} years"
+    )
+    portfolio_desc = (
+        "portfolio smoothing off"
+        if no_portfolio_smoothing
+        else f"portfolio bandwidth={portfolio_bandwidth:g}"
+    )
     return (
         f"Block bootstrap L={block_length}; convex Gaussian smoothing with "
-        f"horizon bandwidth={horizon_bandwidth:g} years, portfolio bandwidth={portfolio_bandwidth:g}"
+        f"{horizon_desc}, {portfolio_desc}"
     )
 
 
@@ -219,6 +257,8 @@ def plot_path(
     block_length: int,
     horizon_bandwidth: float,
     portfolio_bandwidth: float,
+    no_horizon_smoothing: bool,
+    no_portfolio_smoothing: bool,
 ) -> None:
     variant = get_dataset_variant(dataset)
     fig, ax = plt.subplots(figsize=(9, 8), constrained_layout=True)
@@ -251,7 +291,7 @@ def plot_path(
 
     ax.set_title(
         f"Convex-Smoothed q02 Optimal Path: {variant.title_suffix}\n"
-        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth)}",
+        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth, no_horizon_smoothing, no_portfolio_smoothing)}",
         fontsize=12,
         fontweight="bold",
     )
@@ -268,13 +308,15 @@ def plot_surfaces(
     block_length: int,
     horizon_bandwidth: float,
     portfolio_bandwidth: float,
+    no_horizon_smoothing: bool,
+    no_portfolio_smoothing: bool,
 ) -> None:
     variant = get_dataset_variant(dataset)
     coords = add_simplex_coordinates(predicted)
     fig, axes = plt.subplots(2, 4, figsize=(13, 7), constrained_layout=True)
     fig.suptitle(
         f"Convex-Smoothed q02 Annualized Return Surface: {variant.title_suffix}\n"
-        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth)}",
+        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth, no_horizon_smoothing, no_portfolio_smoothing)}",
         fontsize=13,
         fontweight="bold",
     )
@@ -306,6 +348,8 @@ def plot_before_after_points(
     block_length: int,
     horizon_bandwidth: float,
     portfolio_bandwidth: float,
+    no_horizon_smoothing: bool,
+    no_portfolio_smoothing: bool,
 ) -> None:
     variant = get_dataset_variant(dataset)
     raw_coords = add_simplex_coordinates(raw)
@@ -314,7 +358,7 @@ def plot_before_after_points(
     fig, axes = plt.subplots(4, 2, figsize=(9.5, 15), constrained_layout=True)
     fig.suptitle(
         f"q02 Annualized Return Before and After Convex Smoothing: {variant.title_suffix}\n"
-        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth)}",
+        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth, no_horizon_smoothing, no_portfolio_smoothing)}",
         fontsize=13,
         fontweight="bold",
     )
@@ -365,6 +409,8 @@ def plot_pure_asset_horizon_smoothing(
     block_length: int,
     horizon_bandwidth: float,
     portfolio_bandwidth: float,
+    no_horizon_smoothing: bool,
+    no_portfolio_smoothing: bool,
 ) -> None:
     variant = get_dataset_variant(dataset)
     raw_pure = raw.copy()
@@ -405,7 +451,7 @@ def plot_pure_asset_horizon_smoothing(
     fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True, constrained_layout=True)
     fig.suptitle(
         f"Pure-Asset q02 Curves Before and After Horizon Smoothing: {variant.title_suffix}\n"
-        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth)}",
+        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth, no_horizon_smoothing, no_portfolio_smoothing)}",
         fontsize=13,
         fontweight="bold",
     )
@@ -437,7 +483,13 @@ def plot_pure_asset_horizon_smoothing(
 def main() -> None:
     args = parse_args()
     data = load_block_summary(args.dataset, args.block_length)
-    predicted, horizon_smoothed = smooth_values(data, args.horizon_bandwidth, args.portfolio_bandwidth)
+    predicted, horizon_smoothed = smooth_values(
+        data,
+        args.horizon_bandwidth,
+        args.portfolio_bandwidth,
+        args.no_horizon_smoothing,
+        args.no_portfolio_smoothing,
+    )
     path = choose_smoothed_path(predicted)
 
     output_dir = get_output_dir(args.dataset, args.output_dir)
@@ -447,13 +499,35 @@ def main() -> None:
         hbw = format_float_for_filename(args.horizon_bandwidth)
         pbw = format_float_for_filename(args.portfolio_bandwidth)
         prefix = f"convex_smoothed_q02_L{args.block_length}_hbw_{hbw}_pbw_{pbw}"
+        if args.no_horizon_smoothing:
+            prefix += "_no_horizon"
+        if args.no_portfolio_smoothing:
+            prefix += "_no_portfolio"
 
     path_pdf = output_dir / f"{prefix}_path.pdf"
     surfaces_pdf = output_dir / f"{prefix}_surfaces.pdf"
     points_pdf = output_dir / f"{prefix}_before_after_points.pdf"
     pure_assets_pdf = output_dir / f"{prefix}_pure_asset_horizon_smoothing.pdf"
-    plot_path(path, path_pdf, args.dataset, args.block_length, args.horizon_bandwidth, args.portfolio_bandwidth)
-    plot_surfaces(predicted, surfaces_pdf, args.dataset, args.block_length, args.horizon_bandwidth, args.portfolio_bandwidth)
+    plot_path(
+        path,
+        path_pdf,
+        args.dataset,
+        args.block_length,
+        args.horizon_bandwidth,
+        args.portfolio_bandwidth,
+        args.no_horizon_smoothing,
+        args.no_portfolio_smoothing,
+    )
+    plot_surfaces(
+        predicted,
+        surfaces_pdf,
+        args.dataset,
+        args.block_length,
+        args.horizon_bandwidth,
+        args.portfolio_bandwidth,
+        args.no_horizon_smoothing,
+        args.no_portfolio_smoothing,
+    )
     plot_before_after_points(
         data,
         predicted,
@@ -462,6 +536,8 @@ def main() -> None:
         args.block_length,
         args.horizon_bandwidth,
         args.portfolio_bandwidth,
+        args.no_horizon_smoothing,
+        args.no_portfolio_smoothing,
     )
     plot_pure_asset_horizon_smoothing(
         data,
@@ -471,6 +547,8 @@ def main() -> None:
         args.block_length,
         args.horizon_bandwidth,
         args.portfolio_bandwidth,
+        args.no_horizon_smoothing,
+        args.no_portfolio_smoothing,
     )
 
     observed_range = data["q02_annualized_return"].agg(["min", "max"])
