@@ -17,6 +17,13 @@ from explore_portfolio_tradeoffs import (
 DEFAULT_BLOCK_LENGTH = 10
 DEFAULT_HORIZON_BANDWIDTH = 8.0
 DEFAULT_PORTFOLIO_BANDWIDTH = 0.08
+DIAGNOSTIC_HORIZONS = [1, 5, 20, 50]
+PURE_ASSET_MAP = {
+    (1.0, 0.0, 0.0): "US Stocks",
+    (0.0, 1.0, 0.0): "US Bonds",
+    (0.0, 0.0, 1.0): "Treasury Bills",
+}
+PURE_ASSET_ORDER = ["US Stocks", "US Bonds", "Treasury Bills"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,11 +144,27 @@ def build_value_matrix(data: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, np
     return weights, horizons, matrix
 
 
+def matrix_to_long(
+    weights: pd.DataFrame,
+    horizons: np.ndarray,
+    values: np.ndarray,
+    value_column: str,
+) -> pd.DataFrame:
+    rows = []
+    for horizon_index, horizon in enumerate(horizons):
+        frame = weights.copy()
+        frame["horizon"] = int(horizon)
+        frame[value_column] = values[:, horizon_index]
+        rows.append(frame)
+
+    return pd.concat(rows, ignore_index=True)
+
+
 def smooth_values(
     data: pd.DataFrame,
     horizon_bandwidth: float,
     portfolio_bandwidth: float,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     weights, horizons, raw_values = build_value_matrix(data)
 
     horizon_distances = np.abs(horizons[:, None] - horizons[None, :])
@@ -156,14 +179,10 @@ def smooth_values(
     portfolio_kernel = gaussian_row_stochastic_weights(portfolio_distances, portfolio_bandwidth)
     smoothed = portfolio_kernel @ horizon_smoothed
 
-    rows = []
-    for horizon_index, horizon in enumerate(horizons):
-        frame = weights.copy()
-        frame["horizon"] = int(horizon)
-        frame["smoothed_q02_annualized_return"] = smoothed[:, horizon_index]
-        rows.append(frame)
-
-    return pd.concat(rows, ignore_index=True)
+    return (
+        matrix_to_long(weights, horizons, smoothed, "smoothed_q02_annualized_return"),
+        matrix_to_long(weights, horizons, horizon_smoothed, "horizon_smoothed_q02_annualized_return"),
+    )
 
 
 def choose_smoothed_path(predicted: pd.DataFrame) -> pd.DataFrame:
@@ -279,10 +298,146 @@ def plot_surfaces(
     plt.close(fig)
 
 
+def plot_before_after_points(
+    raw: pd.DataFrame,
+    predicted: pd.DataFrame,
+    output_pdf: Path,
+    dataset: str,
+    block_length: int,
+    horizon_bandwidth: float,
+    portfolio_bandwidth: float,
+) -> None:
+    variant = get_dataset_variant(dataset)
+    raw_coords = add_simplex_coordinates(raw)
+    smoothed_coords = add_simplex_coordinates(predicted)
+
+    fig, axes = plt.subplots(4, 2, figsize=(9.5, 15), constrained_layout=True)
+    fig.suptitle(
+        f"q02 Annualized Return Before and After Convex Smoothing: {variant.title_suffix}\n"
+        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth)}",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    for row_index, horizon in enumerate(DIAGNOSTIC_HORIZONS):
+        raw_horizon = raw_coords[raw_coords["horizon"] == horizon]
+        smoothed_horizon = smoothed_coords[smoothed_coords["horizon"] == horizon]
+        color_min = min(
+            raw_horizon["q02_annualized_return"].min(),
+            smoothed_horizon["smoothed_q02_annualized_return"].min(),
+        )
+        color_max = max(
+            raw_horizon["q02_annualized_return"].max(),
+            smoothed_horizon["smoothed_q02_annualized_return"].max(),
+        )
+
+        for column_index, (frame, value_column, title) in enumerate(
+            [
+                (raw_horizon, "q02_annualized_return", "Before smoothing"),
+                (smoothed_horizon, "smoothed_q02_annualized_return", "After smoothing"),
+            ]
+        ):
+            ax = axes[row_index, column_index]
+            scatter = ax.scatter(
+                frame["simplex_x"],
+                frame["simplex_y"],
+                c=frame[value_column],
+                cmap="viridis",
+                vmin=color_min,
+                vmax=color_max,
+                s=8,
+                linewidths=0,
+            )
+            draw_simplex_outline(ax)
+            ax.set_title(f"{title}, {horizon} years", fontsize=10)
+
+        colorbar = fig.colorbar(scatter, ax=axes[row_index, :].tolist(), fraction=0.045, pad=0.02)
+        colorbar.set_label("q02 annualized return")
+    fig.savefig(output_pdf)
+    plt.close(fig)
+
+
+def plot_pure_asset_horizon_smoothing(
+    raw: pd.DataFrame,
+    horizon_smoothed: pd.DataFrame,
+    output_pdf: Path,
+    dataset: str,
+    block_length: int,
+    horizon_bandwidth: float,
+    portfolio_bandwidth: float,
+) -> None:
+    variant = get_dataset_variant(dataset)
+    raw_pure = raw.copy()
+    raw_pure["asset_class"] = list(
+        map(
+            PURE_ASSET_MAP.get,
+            zip(raw_pure["stock_weight"], raw_pure["bond_weight"], raw_pure["t_bill_weight"], strict=True),
+        )
+    )
+    raw_pure = raw_pure.dropna(subset=["asset_class"]).copy()
+    raw_pure["stage"] = "Before horizon smoothing"
+    raw_pure["annualized_return"] = raw_pure["q02_annualized_return"]
+
+    smoothed_pure = horizon_smoothed.copy()
+    smoothed_pure["asset_class"] = list(
+        map(
+            PURE_ASSET_MAP.get,
+            zip(
+                smoothed_pure["stock_weight"],
+                smoothed_pure["bond_weight"],
+                smoothed_pure["t_bill_weight"],
+                strict=True,
+            ),
+        )
+    )
+    smoothed_pure = smoothed_pure.dropna(subset=["asset_class"]).copy()
+    smoothed_pure["stage"] = "After horizon smoothing"
+    smoothed_pure["annualized_return"] = smoothed_pure["horizon_smoothed_q02_annualized_return"]
+
+    plot_data = pd.concat(
+        [
+            raw_pure[["asset_class", "horizon", "stage", "annualized_return"]],
+            smoothed_pure[["asset_class", "horizon", "stage", "annualized_return"]],
+        ],
+        ignore_index=True,
+    )
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True, constrained_layout=True)
+    fig.suptitle(
+        f"Pure-Asset q02 Curves Before and After Horizon Smoothing: {variant.title_suffix}\n"
+        f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth)}",
+        fontsize=13,
+        fontweight="bold",
+    )
+    colors = {
+        "Before horizon smoothing": "#7f7f7f",
+        "After horizon smoothing": "#1b9e77",
+    }
+
+    for ax, asset_class in zip(axes, PURE_ASSET_ORDER):
+        asset = plot_data[plot_data["asset_class"] == asset_class]
+        for stage, group in asset.groupby("stage", sort=False):
+            ax.plot(
+                group["horizon"],
+                group["annualized_return"],
+                label=stage,
+                color=colors[stage],
+                linewidth=1.8,
+            )
+        ax.set_title(asset_class, fontsize=11, fontweight="bold")
+        ax.set_ylabel("q02 annualized")
+        ax.grid(alpha=0.2)
+
+    axes[-1].set_xlabel("Horizon")
+    axes[0].legend(loc="best")
+    fig.savefig(output_pdf)
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     data = load_block_summary(args.dataset, args.block_length)
-    predicted = smooth_values(data, args.horizon_bandwidth, args.portfolio_bandwidth)
+    predicted, horizon_smoothed = smooth_values(data, args.horizon_bandwidth, args.portfolio_bandwidth)
     path = choose_smoothed_path(predicted)
 
     output_dir = get_output_dir(args.dataset, args.output_dir)
@@ -295,13 +450,35 @@ def main() -> None:
 
     path_pdf = output_dir / f"{prefix}_path.pdf"
     surfaces_pdf = output_dir / f"{prefix}_surfaces.pdf"
+    points_pdf = output_dir / f"{prefix}_before_after_points.pdf"
+    pure_assets_pdf = output_dir / f"{prefix}_pure_asset_horizon_smoothing.pdf"
     plot_path(path, path_pdf, args.dataset, args.block_length, args.horizon_bandwidth, args.portfolio_bandwidth)
     plot_surfaces(predicted, surfaces_pdf, args.dataset, args.block_length, args.horizon_bandwidth, args.portfolio_bandwidth)
+    plot_before_after_points(
+        data,
+        predicted,
+        points_pdf,
+        args.dataset,
+        args.block_length,
+        args.horizon_bandwidth,
+        args.portfolio_bandwidth,
+    )
+    plot_pure_asset_horizon_smoothing(
+        data,
+        horizon_smoothed,
+        pure_assets_pdf,
+        args.dataset,
+        args.block_length,
+        args.horizon_bandwidth,
+        args.portfolio_bandwidth,
+    )
 
     observed_range = data["q02_annualized_return"].agg(["min", "max"])
     smoothed_range = predicted["smoothed_q02_annualized_return"].agg(["min", "max"])
     print(f"Wrote {path_pdf.relative_to(ROOT)}")
     print(f"Wrote {surfaces_pdf.relative_to(ROOT)}")
+    print(f"Wrote {points_pdf.relative_to(ROOT)}")
+    print(f"Wrote {pure_assets_pdf.relative_to(ROOT)}")
     print(
         "Observed q02 range: "
         f"{observed_range['min']:.6f} to {observed_range['max']:.6f}"
