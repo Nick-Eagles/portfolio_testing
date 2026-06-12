@@ -419,8 +419,8 @@ def plot_path(
     plt.close(fig)
 
 
-def plot_raw_return_comparison(
-    raw: pd.DataFrame,
+def plot_smoothed_return_comparison(
+    predicted: pd.DataFrame,
     path: pd.DataFrame,
     output_pdf: Path,
     dataset: str,
@@ -434,11 +434,11 @@ def plot_raw_return_comparison(
 ) -> pd.DataFrame:
     variant = get_dataset_variant(dataset)
     key_columns = ["horizon", "stock_weight", "bond_weight", "t_bill_weight"]
-    raw_best = (
-        raw.sort_values(
+    smoothed_best = (
+        predicted.sort_values(
             [
                 "horizon",
-                "selected_annualized_return",
+                "smoothed_annualized_return",
                 "stock_weight",
                 "bond_weight",
                 "t_bill_weight",
@@ -446,46 +446,49 @@ def plot_raw_return_comparison(
             ascending=[True, False, True, True, True],
         )
         .groupby("horizon", as_index=False)
-        .head(1)[["horizon", "selected_annualized_return"]]
-        .rename(columns={"selected_annualized_return": "raw_best_annualized_return"})
+        .head(1)[["horizon", "smoothed_annualized_return"]]
+        .rename(columns={"smoothed_annualized_return": "smoothed_best_annualized_return"})
     )
-    path_raw = path[key_columns].merge(
-        raw[key_columns + ["selected_annualized_return"]],
+    path_smoothed = path[key_columns].merge(
+        predicted[key_columns + ["smoothed_annualized_return"]],
         on=key_columns,
         how="left",
     )
-    if path_raw["selected_annualized_return"].isna().any():
-        raise ValueError("Could not match every optimized path point back to the raw data.")
+    if path_smoothed["smoothed_annualized_return"].isna().any():
+        raise ValueError("Could not match every optimized path point back to the smoothed data.")
 
-    comparison = raw_best.merge(path_raw[["horizon", "selected_annualized_return"]], on="horizon")
+    comparison = smoothed_best.merge(
+        path_smoothed[["horizon", "smoothed_annualized_return"]],
+        on="horizon",
+    )
     comparison = comparison.rename(
-        columns={"selected_annualized_return": "optimized_path_raw_annualized_return"}
+        columns={"smoothed_annualized_return": "optimized_path_smoothed_annualized_return"}
     )
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     ax.plot(
         comparison["horizon"],
-        comparison["raw_best_annualized_return"],
+        comparison["smoothed_best_annualized_return"],
         color="#2c7fb8",
         linewidth=2.0,
-        label="Raw per-horizon optimum",
+        label="Smoothed per-horizon optimum",
     )
     ax.plot(
         comparison["horizon"],
-        comparison["optimized_path_raw_annualized_return"],
+        comparison["optimized_path_smoothed_annualized_return"],
         color="#d95f02",
         linewidth=2.0,
-        label="Joint path, evaluated on raw data",
+        label="Joint path, evaluated on smoothed surface",
     )
     ax.set_title(
-        f"Raw {quantile_label(quantile)} Return Cost of Joint Path Optimization: {variant.title_suffix}\n"
+        f"Smoothed {quantile_label(quantile)} Return Cost of Joint Path Optimization: {variant.title_suffix}\n"
         f"{make_subtitle(block_length, horizon_bandwidth, portfolio_bandwidth, no_horizon_smoothing, no_portfolio_smoothing)}; "
         f"path lambda={path_distance_lambda:g}",
         fontsize=12,
         fontweight="bold",
     )
     ax.set_xlabel("Horizon")
-    ax.set_ylabel("Raw annualized gross return")
+    ax.set_ylabel("Smoothed annualized gross return")
     ax.grid(alpha=0.25)
     ax.legend(loc="best")
     fig.savefig(output_pdf)
@@ -707,7 +710,7 @@ def main() -> None:
     surfaces_pdf = output_dir / f"{prefix}_surfaces.pdf"
     points_pdf = output_dir / f"{prefix}_before_after_points.pdf"
     pure_assets_pdf = output_dir / f"{prefix}_pure_asset_horizon_smoothing.pdf"
-    return_comparison_pdf = output_dir / f"{prefix}_raw_return_comparison.pdf"
+    return_comparison_pdf = output_dir / f"{prefix}_smoothed_return_comparison.pdf"
     plot_path(
         path,
         path_pdf,
@@ -755,8 +758,8 @@ def main() -> None:
         args.no_horizon_smoothing,
         args.no_portfolio_smoothing,
     )
-    return_comparison = plot_raw_return_comparison(
-        data,
+    return_comparison = plot_smoothed_return_comparison(
+        predicted,
         path,
         return_comparison_pdf,
         args.dataset,
@@ -771,9 +774,9 @@ def main() -> None:
 
     observed_range = data["selected_annualized_return"].agg(["min", "max"])
     smoothed_range = predicted["smoothed_annualized_return"].agg(["min", "max"])
-    raw_return_gap = (
-        return_comparison["raw_best_annualized_return"]
-        - return_comparison["optimized_path_raw_annualized_return"]
+    smoothed_return_gap = (
+        return_comparison["smoothed_best_annualized_return"]
+        - return_comparison["optimized_path_smoothed_annualized_return"]
     )
     print(f"Wrote {path_pdf.relative_to(ROOT)}")
     print(f"Wrote {surfaces_pdf.relative_to(ROOT)}")
@@ -789,8 +792,8 @@ def main() -> None:
         f"{smoothed_range['min']:.6f} to {smoothed_range['max']:.6f}"
     )
     print(
-        f"Joint path raw-return gap vs raw per-horizon {quantile_label(args.quantile)} optimum: "
-        f"mean={raw_return_gap.mean():.6f}, max={raw_return_gap.max():.6f}"
+        f"Joint path smoothed-return gap vs smoothed per-horizon {quantile_label(args.quantile)} optimum: "
+        f"mean={smoothed_return_gap.mean():.6f}, max={smoothed_return_gap.max():.6f}"
     )
     print(
         "Joint path simplex movement: "
