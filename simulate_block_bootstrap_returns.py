@@ -15,6 +15,7 @@ NUM_SIMULATIONS = 50_000
 DEFAULT_SEED = 20260609
 DEFAULT_PORTFOLIO_CHUNK_SIZE = 2_000
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
+CHECKPOINT_INTERVAL = 10_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +55,15 @@ def get_input_csv(dataset: str) -> Path:
 
 def get_output_parquet(dataset: str) -> Path:
     return DATA_DIR / "block_bootstrap" / dataset / "portfolio_return_bootstrap_summary.parquet"
+
+
+def get_checkpoint_output_parquet(dataset: str) -> Path:
+    return (
+        DATA_DIR
+        / "block_bootstrap"
+        / dataset
+        / "portfolio_return_bootstrap_summary_checkpoints.parquet"
+    )
 
 
 def load_returns(dataset: str) -> pd.DataFrame:
@@ -114,15 +124,35 @@ def lower_quantiles_in_place(values: np.ndarray, quantiles: tuple[float, ...]) -
     return values[kth_indexes]
 
 
+def summarize_annualized_returns(
+    annualized_returns: np.ndarray,
+    quantiles: tuple[float, ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    mean = annualized_returns.mean(axis=0)
+    q01, q02, q10, median = lower_quantiles_in_place(annualized_returns.copy(), quantiles)
+    return mean, q01, q02, q10, median
+
+
+def get_checkpoints(num_simulations: int, interval: int = CHECKPOINT_INTERVAL) -> tuple[int, ...]:
+    if interval <= 0:
+        raise ValueError("Checkpoint interval must be positive.")
+    return tuple(
+        checkpoint
+        for checkpoint in range(interval, num_simulations, interval)
+    )
+
+
 def summarize_block_paths_for_weights(
     annual_log_growth: np.ndarray,
     weights: pd.DataFrame,
     paths: np.ndarray,
     block_length: int,
     portfolio_chunk_size: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     num_simulations = paths.shape[0]
-    rows = []
+    checkpoints = get_checkpoints(num_simulations)
+    full_rows = []
+    checkpoint_rows = []
 
     for start in range(0, len(weights), portfolio_chunk_size):
         stop = min(start + portfolio_chunk_size, len(weights))
@@ -133,8 +163,10 @@ def summarize_block_paths_for_weights(
             horizon = year_offset + 1
 
             annualized_returns = np.exp(terminal_log_growth / horizon) - 1
-            mean = annualized_returns.mean(axis=0)
-            q01, q02, q10, median = lower_quantiles_in_place(annualized_returns, QUANTILES)
+            mean, q01, q02, q10, median = summarize_annualized_returns(
+                annualized_returns,
+                QUANTILES,
+            )
 
             chunk_rows = weights.iloc[start:stop].copy()
             chunk_rows["block_length"] = block_length
@@ -145,12 +177,46 @@ def summarize_block_paths_for_weights(
             chunk_rows["q10"] = q10
             chunk_rows["median"] = median
             chunk_rows["mean"] = mean
-            rows.append(chunk_rows)
+            full_rows.append(chunk_rows)
+
+            for checkpoint in checkpoints:
+                checkpoint_mean, checkpoint_q01, checkpoint_q02, checkpoint_q10, checkpoint_median = (
+                    summarize_annualized_returns(annualized_returns[:checkpoint], QUANTILES)
+                )
+                checkpoint_chunk_rows = weights.iloc[start:stop].copy()
+                checkpoint_chunk_rows["block_length"] = block_length
+                checkpoint_chunk_rows["horizon"] = horizon
+                checkpoint_chunk_rows["num_simulations"] = checkpoint
+                checkpoint_chunk_rows["q01"] = checkpoint_q01
+                checkpoint_chunk_rows["q02"] = checkpoint_q02
+                checkpoint_chunk_rows["q10"] = checkpoint_q10
+                checkpoint_chunk_rows["median"] = checkpoint_median
+                checkpoint_chunk_rows["mean"] = checkpoint_mean
+                checkpoint_rows.append(checkpoint_chunk_rows)
 
             if start == 0 and (horizon % 10 == 0 or horizon == paths.shape[1]):
                 print(f"  Horizon {horizon}", flush=True)
 
-    return pd.concat(rows, ignore_index=True)
+    checkpoint_frame = (
+        pd.concat(checkpoint_rows, ignore_index=True)
+        if checkpoint_rows
+        else pd.DataFrame(
+            columns=[
+                "stock_weight",
+                "bond_weight",
+                "t_bill_weight",
+                "block_length",
+                "horizon",
+                "num_simulations",
+                "q01",
+                "q02",
+                "q10",
+                "median",
+                "mean",
+            ]
+        )
+    )
+    return pd.concat(full_rows, ignore_index=True), checkpoint_frame
 
 
 def compute_bootstrap_summary(
@@ -160,7 +226,7 @@ def compute_bootstrap_summary(
     num_simulations: int,
     seed: int,
     portfolio_chunk_size: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
         raise ValueError("num_simulations must be at least 1")
     if portfolio_chunk_size < 1:
@@ -171,6 +237,7 @@ def compute_bootstrap_summary(
     annual_log_growth = np.log1p(asset_returns @ weight_matrix.T)
     num_years = len(returns)
     summaries = []
+    checkpoint_summaries = []
 
     for block_length in BLOCK_LENGTHS:
         print(f"Block length {block_length}", flush=True)
@@ -182,7 +249,7 @@ def compute_bootstrap_summary(
             num_simulations=num_simulations,
             rng=rng,
         )
-        block_summary = summarize_block_paths_for_weights(
+        block_summary, block_checkpoint_summary = summarize_block_paths_for_weights(
             annual_log_growth=annual_log_growth,
             weights=weights,
             paths=paths,
@@ -190,23 +257,35 @@ def compute_bootstrap_summary(
             portfolio_chunk_size=portfolio_chunk_size,
         )
         summaries.append(block_summary)
+        checkpoint_summaries.append(block_checkpoint_summary)
 
-    summary = pd.concat(summaries, ignore_index=True)
-    return summary[
-        [
-            "stock_weight",
-            "bond_weight",
-            "t_bill_weight",
-            "block_length",
-            "horizon",
-            "num_simulations",
-            "q01",
-            "q02",
-            "q10",
-            "median",
-            "mean",
-        ]
+    ordered_columns = [
+        "stock_weight",
+        "bond_weight",
+        "t_bill_weight",
+        "block_length",
+        "horizon",
+        "num_simulations",
+        "q01",
+        "q02",
+        "q10",
+        "median",
+        "mean",
     ]
+    summary = pd.concat(summaries, ignore_index=True)
+    checkpoint_summary = (
+        pd.concat(checkpoint_summaries, ignore_index=True)
+        if checkpoint_summaries
+        else pd.DataFrame(columns=ordered_columns)
+    )
+    return (
+        summary[ordered_columns].sort_values(
+            ["block_length", "horizon", "stock_weight", "bond_weight", "t_bill_weight"]
+        ).reset_index(drop=True),
+        checkpoint_summary[ordered_columns].sort_values(
+            ["num_simulations", "block_length", "horizon", "stock_weight", "bond_weight", "t_bill_weight"]
+        ).reset_index(drop=True),
+    )
 
 
 def run_dataset(
@@ -218,9 +297,10 @@ def run_dataset(
     returns = load_returns(dataset)
     weights = generate_portfolio_weights()
     output_parquet = get_output_parquet(dataset)
+    checkpoint_output_parquet = get_checkpoint_output_parquet(dataset)
     output_parquet.parent.mkdir(parents=True, exist_ok=True)
 
-    summary = compute_bootstrap_summary(
+    summary, checkpoint_summary = compute_bootstrap_summary(
         returns=returns,
         weights=weights,
         dataset=dataset,
@@ -229,8 +309,13 @@ def run_dataset(
         portfolio_chunk_size=portfolio_chunk_size,
     )
     temp_parquet = output_parquet.with_suffix(output_parquet.suffix + ".tmp")
+    checkpoint_temp_parquet = checkpoint_output_parquet.with_suffix(
+        checkpoint_output_parquet.suffix + ".tmp"
+    )
     summary.to_parquet(temp_parquet, index=False)
+    checkpoint_summary.to_parquet(checkpoint_temp_parquet, index=False)
     temp_parquet.replace(output_parquet)
+    checkpoint_temp_parquet.replace(checkpoint_output_parquet)
 
     print(f"Dataset: {dataset}")
     print(f"Input years: {returns['year'].min()}-{returns['year'].max()} ({len(returns)} years)")
@@ -239,6 +324,10 @@ def run_dataset(
     print(f"Horizons: 1-{MAX_HORIZON} years")
     print(f"Simulations per block length and horizon: {num_simulations:,}")
     print(f"Wrote {output_parquet.relative_to(ROOT)} ({len(summary):,} rows)")
+    print(
+        f"Wrote {checkpoint_output_parquet.relative_to(ROOT)} "
+        f"({len(checkpoint_summary):,} rows)"
+    )
 
 
 def main() -> None:

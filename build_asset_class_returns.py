@@ -20,7 +20,7 @@ from dataset_variants import DATASET_VARIANTS, ROOT, WORKBOOK, get_dataset_varia
 SOURCE_COLUMNS = {
     "TSM (US)": "us_stocks_real_return_pct",
     "TBM (US)": "us_bonds_real_return_pct",
-    "T-Bill": "treasury_bills_real_return_pct",
+    "T-Bills TR": "treasury_bills_real_return_pct",
 }
 
 PLOT_LABELS = {
