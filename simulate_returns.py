@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dataset_variants import DATASET_VARIANTS, DATA_DIR, ROOT, get_dataset_variant
-from simulate_portfolio_returns import RETURN_COLUMNS, generate_portfolio_weights
+from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
 
 
 BLOCK_LENGTHS = (3, 5, 10, 15, 20)
@@ -20,7 +20,7 @@ CHECKPOINT_INTERVAL = 10_000
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Summarize stationary circular block bootstrap portfolio returns."
+        description="Summarize stationary circular resampled portfolio returns."
     )
     parser.add_argument(
         "--dataset",
@@ -54,16 +54,11 @@ def get_input_csv(dataset: str) -> Path:
 
 
 def get_output_parquet(dataset: str) -> Path:
-    return DATA_DIR / "block_bootstrap" / dataset / "portfolio_return_bootstrap_summary.parquet"
+    return get_dataset_variant(dataset).data_dir / "portfolio_return_summary.parquet"
 
 
 def get_checkpoint_output_parquet(dataset: str) -> Path:
-    return (
-        DATA_DIR
-        / "block_bootstrap"
-        / dataset
-        / "portfolio_return_bootstrap_summary_checkpoints.parquet"
-    )
+    return get_dataset_variant(dataset).data_dir / "portfolio_return_summary_checkpoints.parquet"
 
 
 def load_returns(dataset: str) -> pd.DataFrame:
@@ -91,7 +86,7 @@ def make_rng(seed: int, dataset: str, block_length: int) -> np.random.Generator:
     return np.random.default_rng(seed_sequence)
 
 
-def generate_bootstrap_paths(
+def generate_resampled_paths(
     num_years: int,
     horizon: int,
     block_length: int,
@@ -219,7 +214,7 @@ def summarize_block_paths_for_weights(
     return pd.concat(full_rows, ignore_index=True), checkpoint_frame
 
 
-def compute_bootstrap_summary(
+def compute_return_summary(
     returns: pd.DataFrame,
     weights: pd.DataFrame,
     dataset: str,
@@ -242,7 +237,7 @@ def compute_bootstrap_summary(
     for block_length in BLOCK_LENGTHS:
         print(f"Block length {block_length}", flush=True)
         rng = make_rng(seed, dataset, block_length)
-        paths = generate_bootstrap_paths(
+        paths = generate_resampled_paths(
             num_years=num_years,
             horizon=MAX_HORIZON,
             block_length=block_length,
@@ -300,7 +295,7 @@ def run_dataset(
     checkpoint_output_parquet = get_checkpoint_output_parquet(dataset)
     output_parquet.parent.mkdir(parents=True, exist_ok=True)
 
-    summary, checkpoint_summary = compute_bootstrap_summary(
+    summary, checkpoint_summary = compute_return_summary(
         returns=returns,
         weights=weights,
         dataset=dataset,
