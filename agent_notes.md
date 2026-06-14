@@ -109,7 +109,7 @@ and writes:
 
 ## Interpretation Notes
 
-The main conservative objective is lower-tail annualized return, especially q02. The current smoothed workflow defaults to `from_1927`, block length `10`, horizon bandwidth `0.7`, portfolio bandwidth `0.05`, and path distance lambda `0.05`.
+The main conservative objective is lower-tail annualized return, especially q02. The current smoothed workflow defaults to `from_1927`, block length `10`, horizon bandwidth `0.17` on `sqrt(horizon)`, portfolio bandwidth `0.01`, and path distance lambda `0.02`.
 
 The smoothed-return cost comparison is evaluated on the smoothed q02 surface. It compares the smoothed per-horizon optimum with the jointly optimized path to isolate the effect of the path-distance lambda from the smoothing parameters.
 

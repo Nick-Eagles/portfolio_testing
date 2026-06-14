@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         "--horizon-bandwidth",
         type=float,
         default=DEFAULT_HORIZON_BANDWIDTH,
-        help="Gaussian kernel bandwidth, in years, for smoothing each portfolio across horizons.",
+        help="Gaussian kernel bandwidth on sqrt(horizon) for smoothing each portfolio across horizons.",
     )
     parser.add_argument(
         "--portfolio-bandwidth",

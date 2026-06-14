@@ -10,9 +10,9 @@ from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 
 
 DEFAULT_BLOCK_LENGTH = 10
-DEFAULT_HORIZON_BANDWIDTH = 0.7
-DEFAULT_PORTFOLIO_BANDWIDTH = 0.05
-DEFAULT_PATH_DISTANCE_LAMBDA = 0.05
+DEFAULT_HORIZON_BANDWIDTH = 0.17
+DEFAULT_PORTFOLIO_BANDWIDTH = 0.01
+DEFAULT_PATH_DISTANCE_LAMBDA = 0.02
 SELECTED_HORIZONS = [1, 5, 10, 20, 30, 40, 50]
 DIAGNOSTIC_HORIZONS = [1, 5, 20, 50]
 HORIZON_LABEL_OFFSETS = {
@@ -104,7 +104,7 @@ def make_smoothing_subtitle(
     horizon_desc = (
         "horizon smoothing off"
         if no_horizon_smoothing
-        else f"horizon bandwidth={horizon_bandwidth:g} years"
+        else f"sqrt-horizon bandwidth={horizon_bandwidth:g}"
     )
     portfolio_desc = (
         "portfolio smoothing off"
@@ -222,7 +222,8 @@ def smooth_q02_values(
     if no_horizon_smoothing:
         horizon_kernel = identity_weights(len(horizons))
     else:
-        horizon_distances = np.abs(horizons[:, None] - horizons[None, :])
+        sqrt_horizons = np.sqrt(horizons.astype(float))
+        horizon_distances = np.abs(sqrt_horizons[:, None] - sqrt_horizons[None, :])
         horizon_kernel = gaussian_row_stochastic_weights(horizon_distances, horizon_bandwidth)
     horizon_smoothed_values = raw_values @ horizon_kernel.T
 

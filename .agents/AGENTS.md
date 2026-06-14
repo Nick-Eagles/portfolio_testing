@@ -74,7 +74,7 @@ np.partition(values, kth, axis=0)[kth]
 - `build_asset_class_returns.py`: extracts clean asset-return CSVs and growth-of-$1 line plots.
 - `simulate_returns.py`: computes stationary circular resampled portfolio summaries and checkpoint summaries.
 - `convex_smoothing.py`: shared helpers for q02 convex smoothing and smoothed-path optimization.
-- `build_smoothed_stats.py`: central script that chooses block length and smoothing bandwidths, writes smoothed q02 stats, and writes smoothing diagnostics.
+- `build_smoothed_stats.py`: central script that chooses block length and smoothing bandwidths, writes smoothed q02 stats, and writes smoothing diagnostics. Horizon smoothing now uses a Gaussian kernel over `sqrt(horizon)`.
 - `plot_smoothed_q02_results.py`: downstream smoothed q02 plots for surfaces, all-assets-vs-no-bonds, and pure-asset tail curves.
 - `plot_smoothed_optimal_path.py`: downstream optimal-path plots using the central smoothed q02 stats.
 
