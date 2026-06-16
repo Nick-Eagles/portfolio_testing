@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from portfolio_helpers import RETURN_COLUMNS
 
 
 DEFAULT_BLOCK_LENGTH = 10
@@ -135,7 +136,7 @@ def load_q02_return_summary(dataset: str, block_length: int) -> pd.DataFrame:
     data["mean_annualized_return"] = 1 + data["mean"]
     data["mean_relative_return"] = np.power(1 + data["mean"], data["horizon"])
     data["median_annualized_return"] = 1 + data["median"]
-    return data[
+    data = data[
         [
             "stock_weight",
             "bond_weight",
@@ -150,6 +151,70 @@ def load_q02_return_summary(dataset: str, block_length: int) -> pd.DataFrame:
             "median_annualized_return",
         ]
     ].sort_values(
+        ["stock_weight", "bond_weight", "t_bill_weight", "horizon"]
+    ).reset_index(drop=True)
+    return replace_horizon_one_with_exact_stats(dataset, data)
+
+
+def lower_quantile(values: np.ndarray, quantile: float) -> np.ndarray:
+    kth = int(np.floor((values.shape[0] - 1) * quantile))
+    return np.partition(values, kth, axis=0)[kth]
+
+
+def replace_horizon_one_with_exact_stats(dataset: str, data: pd.DataFrame) -> pd.DataFrame:
+    horizon_one = data[data["horizon"] == 1].copy()
+    if horizon_one.empty:
+        return data
+
+    asset_returns_csv = get_dataset_variant(dataset).data_dir / "asset_class_real_returns.csv"
+    if not asset_returns_csv.exists():
+        from build_asset_class_returns import build_dataset, load_real_returns
+
+        build_dataset(load_real_returns(), dataset)
+
+    asset_returns = pd.read_csv(asset_returns_csv).sort_values("year").reset_index(drop=True)
+    weights = (
+        horizon_one[["stock_weight", "bond_weight", "t_bill_weight"]]
+        .drop_duplicates()
+        .sort_values(["stock_weight", "bond_weight", "t_bill_weight"])
+        .reset_index(drop=True)
+    )
+    annual_returns = asset_returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100 @ weights.to_numpy(dtype=float).T
+
+    exact = weights.copy()
+    q02 = lower_quantile(annual_returns, 0.02)
+    median = np.median(annual_returns, axis=0)
+    mean = annual_returns.mean(axis=0)
+    exact["raw_q02_annualized_return"] = 1 + q02
+    exact["raw_q02_relative_return"] = 1 + q02
+    exact["mean_annualized_return"] = 1 + mean
+    exact["mean_relative_return"] = 1 + mean
+    exact["median_annualized_return"] = 1 + median
+
+    key_columns = ["stock_weight", "bond_weight", "t_bill_weight"]
+    exact_columns = [
+        *key_columns,
+        "raw_q02_annualized_return",
+        "raw_q02_relative_return",
+        "mean_annualized_return",
+        "mean_relative_return",
+        "median_annualized_return",
+    ]
+    exact = exact[exact_columns]
+    result = data.copy()
+    non_horizon_one = result[result["horizon"] != 1]
+    horizon_one = horizon_one.drop(
+        columns=[
+            "raw_q02_annualized_return",
+            "raw_q02_relative_return",
+            "mean_annualized_return",
+            "mean_relative_return",
+            "median_annualized_return",
+        ]
+    ).merge(exact, on=key_columns, how="left")
+    if horizon_one["raw_q02_annualized_return"].isna().any():
+        raise ValueError("Could not replace every horizon-1 row with exact one-year stats.")
+    return pd.concat([non_horizon_one, horizon_one], ignore_index=True).sort_values(
         ["stock_weight", "bond_weight", "t_bill_weight", "horizon"]
     ).reset_index(drop=True)
 

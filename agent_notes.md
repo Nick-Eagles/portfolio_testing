@@ -53,6 +53,8 @@ Core simulation outputs:
 
 The checkpoint file stores cumulative simulation-count summaries at `10000`, `20000`, `30000`, and `40000`. The full `50000` run is in the main parquet.
 
+Horizon 1 is a boundary case. In the 99-year `from_1927` dataset, q02 is the 2nd-worst observed one-year return under lower interpolation, and a naive 50,000-row random resample can randomly flip between the 2nd- and 3rd-worst year because the two-year cumulative count is close to the q02 cutoff. Future simulations use a balanced horizon-1 starting-year sample shared across block lengths. The smoothing loader also replaces horizon-1 q02/mean/median with exact one-year empirical stats before smoothing and path optimization, so block length cannot change the raw horizon-1 optimum through Monte Carlo count noise.
+
 Lower-tail quantiles should use lower interpolation:
 
 ```python

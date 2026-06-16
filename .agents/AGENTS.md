@@ -44,6 +44,8 @@ Horizons are integer years from 1 to 50.
 
 The simulation workflow uses stationary circular resampling. For a block length `L`, a synthetic path starts at a random historical year, continues to the next year with probability `1 - 1/L`, otherwise jumps to a new random year, and wraps circularly through the historical data as needed. The same simulated paths are used for every portfolio for a given block length and horizon to preserve cross-asset interactions.
 
+Horizon 1 needs special care because the empirical q02 cutoff lies very close to the 2nd-worst observed year in the 99-year `from_1927` dataset. Future simulations use a balanced horizon-1 starting-year sample shared across block lengths, and the smoothing loader replaces horizon-1 q02/mean/median with exact one-year empirical stats before smoothing/path optimization. This prevents block length from changing the raw horizon-1 optimum through Monte Carlo count noise.
+
 Current simulation settings:
 
 - block lengths: `3, 5, 10, 15, 20`

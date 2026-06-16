@@ -86,12 +86,34 @@ def make_rng(seed: int, dataset: str, block_length: int) -> np.random.Generator:
     return np.random.default_rng(seed_sequence)
 
 
+def make_initial_year_rng(seed: int, dataset: str) -> np.random.Generator:
+    dataset_id = zlib.crc32(dataset.encode("utf-8"))
+    stream_id = zlib.crc32(b"initial_years")
+    seed_sequence = np.random.SeedSequence([seed, dataset_id, stream_id])
+    return np.random.default_rng(seed_sequence)
+
+
+def generate_balanced_initial_year_indexes(
+    num_years: int,
+    num_simulations: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    repeats, remainder = divmod(num_simulations, num_years)
+    indexes = np.tile(np.arange(num_years, dtype=np.int32), repeats)
+    if remainder:
+        extra_indexes = rng.choice(num_years, size=remainder, replace=False).astype(np.int32)
+        indexes = np.concatenate([indexes, extra_indexes])
+    rng.shuffle(indexes)
+    return indexes
+
+
 def generate_resampled_paths(
     num_years: int,
     horizon: int,
     block_length: int,
     num_simulations: int,
     rng: np.random.Generator,
+    initial_year_indexes: np.ndarray | None = None,
 ) -> np.ndarray:
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
@@ -99,7 +121,12 @@ def generate_resampled_paths(
         raise ValueError("block_length must be at least 1")
 
     paths = np.empty((num_simulations, horizon), dtype=np.int32)
-    current_year_indexes = rng.integers(0, num_years, size=num_simulations, dtype=np.int32)
+    if initial_year_indexes is None:
+        current_year_indexes = rng.integers(0, num_years, size=num_simulations, dtype=np.int32)
+    else:
+        if len(initial_year_indexes) != num_simulations:
+            raise ValueError("initial_year_indexes must match num_simulations.")
+        current_year_indexes = initial_year_indexes.copy()
     paths[:, 0] = current_year_indexes
 
     continue_probability = 1 - (1 / block_length)
@@ -233,6 +260,11 @@ def compute_return_summary(
     num_years = len(returns)
     summaries = []
     checkpoint_summaries = []
+    initial_year_indexes = generate_balanced_initial_year_indexes(
+        num_years=num_years,
+        num_simulations=num_simulations,
+        rng=make_initial_year_rng(seed, dataset),
+    )
 
     for block_length in BLOCK_LENGTHS:
         print(f"Block length {block_length}", flush=True)
@@ -243,6 +275,7 @@ def compute_return_summary(
             block_length=block_length,
             num_simulations=num_simulations,
             rng=rng,
+            initial_year_indexes=initial_year_indexes,
         )
         block_summary, block_checkpoint_summary = summarize_block_paths_for_weights(
             annual_log_growth=annual_log_growth,
