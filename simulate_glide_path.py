@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 
 from convex_smoothing import (
-    DEFAULT_PATH_DISTANCE_LAMBDA,
     DEFAULT_PORTFOLIO_BANDWIDTH,
     add_simplex_coordinates,
     gaussian_row_stochastic_weights,
@@ -24,6 +23,7 @@ BLOCK_LENGTH = 10
 NUM_SIMULATIONS = 20_000
 DEFAULT_SEED = 20260616
 DEFAULT_PORTFOLIO_CHUNK_SIZE = 500
+DEFAULT_PATH_DISTANCE_LAMBDA = 2.0
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 
 
@@ -150,6 +150,14 @@ def make_portfolio_smoothing_kernel(
     return coords, gaussian_row_stochastic_weights(distances, portfolio_bandwidth)
 
 
+def zscore_values(values: pd.Series) -> pd.Series:
+    mean = values.mean()
+    std = values.std(ddof=0)
+    if std <= 0 or not np.isfinite(std):
+        return pd.Series(np.zeros(len(values), dtype=float), index=values.index)
+    return (values - mean) / std
+
+
 def choose_horizon_portfolio(
     horizon_summary: pd.DataFrame,
     previous_selected: pd.Series | None,
@@ -164,13 +172,15 @@ def choose_horizon_portfolio(
             + (result["simplex_y"] - previous_selected["simplex_y"]) ** 2
         )
 
+    result["portfolio_smoothed_q02_zscore"] = zscore_values(result["portfolio_smoothed_q02"])
     distance_penalty = result["prior_simplex_step_distance"].fillna(0.0)
     result["greedy_score"] = (
-        result["portfolio_smoothed_q02"] - path_distance_lambda * distance_penalty
+        result["portfolio_smoothed_q02_zscore"] - path_distance_lambda * distance_penalty
     )
     selected = result.sort_values(
         [
             "greedy_score",
+            "portfolio_smoothed_q02_zscore",
             "portfolio_smoothed_q02",
             "q02",
             "mean",
@@ -178,7 +188,7 @@ def choose_horizon_portfolio(
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, True, True, True],
+        ascending=[False, False, False, False, False, True, True, True],
     ).iloc[0]
     result["is_selected"] = False
     result.loc[selected.name, "is_selected"] = True
@@ -353,6 +363,7 @@ def build_greedy_glide_path(
         "median",
         "mean",
         "portfolio_smoothed_q02",
+        "portfolio_smoothed_q02_zscore",
         "prior_simplex_step_distance",
         "greedy_score",
         "is_selected",
@@ -394,6 +405,7 @@ def write_metadata(
             ("portfolio_bandwidth", portfolio_bandwidth),
             ("no_portfolio_smoothing", no_portfolio_smoothing),
             ("horizon_smoothing", False),
+            ("selection_scale", "per-horizon z-score of portfolio_smoothed_q02"),
             ("path_distance_lambda", path_distance_lambda),
             ("path_direction", "horizon H portfolio is the first year of an H-year path"),
         ],
