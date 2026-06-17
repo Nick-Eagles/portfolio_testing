@@ -24,6 +24,7 @@ NUM_SIMULATIONS = 20_000
 DEFAULT_SEED = 20260616
 DEFAULT_PORTFOLIO_CHUNK_SIZE = 500
 DEFAULT_PATH_DISTANCE_LAMBDA = 2.0
+DEFAULT_PATH_DIRECTION_LAMBDA = 0.0
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 
 
@@ -77,6 +78,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Penalty per unit Euclidean simplex distance from the previously selected "
             "shorter-horizon portfolio."
+        ),
+    )
+    parser.add_argument(
+        "--path-direction-lambda",
+        type=float,
+        default=DEFAULT_PATH_DIRECTION_LAMBDA,
+        help=(
+            "Reward weight on cosine similarity with the most recent nonzero simplex-step "
+            "direction. Horizons 1 and 2 always use 0."
         ),
     )
     parser.add_argument(
@@ -158,15 +168,35 @@ def zscore_values(values: pd.Series) -> pd.Series:
     return (values - mean) / std
 
 
+def get_reference_direction(path_rows: list[pd.Series]) -> np.ndarray | None:
+    for row in reversed(path_rows):
+        distance = row.get("prior_simplex_step_distance", np.nan)
+        if pd.notna(distance) and distance > 0:
+            return np.array(
+                [
+                    row["simplex_x"] - row["prior_simplex_x"],
+                    row["simplex_y"] - row["prior_simplex_y"],
+                ],
+                dtype=float,
+            )
+    return None
+
+
 def choose_horizon_portfolio(
     horizon_summary: pd.DataFrame,
     previous_selected: pd.Series | None,
+    selected_rows: list[pd.Series],
     path_distance_lambda: float,
+    path_direction_lambda: float,
 ) -> tuple[pd.Series, pd.DataFrame]:
     result = horizon_summary.copy()
     if previous_selected is None:
         result["prior_simplex_step_distance"] = np.nan
+        result["prior_simplex_x"] = np.nan
+        result["prior_simplex_y"] = np.nan
     else:
+        result["prior_simplex_x"] = previous_selected["simplex_x"]
+        result["prior_simplex_y"] = previous_selected["simplex_y"]
         result["prior_simplex_step_distance"] = np.sqrt(
             (result["simplex_x"] - previous_selected["simplex_x"]) ** 2
             + (result["simplex_y"] - previous_selected["simplex_y"]) ** 2
@@ -174,12 +204,32 @@ def choose_horizon_portfolio(
 
     result["portfolio_smoothed_q02_zscore"] = zscore_values(result["portfolio_smoothed_q02"])
     distance_penalty = result["prior_simplex_step_distance"].fillna(0.0)
+    reference_direction = get_reference_direction(selected_rows)
+    if reference_direction is None or previous_selected is None:
+        result["prior_direction_cosine_similarity"] = 0.0
+    else:
+        current_dx = result["simplex_x"] - previous_selected["simplex_x"]
+        current_dy = result["simplex_y"] - previous_selected["simplex_y"]
+        current_norm = np.sqrt(current_dx**2 + current_dy**2)
+        reference_norm = float(np.sqrt(np.sum(reference_direction**2)))
+        dot = current_dx * reference_direction[0] + current_dy * reference_direction[1]
+        cosine = dot / (current_norm * reference_norm)
+        result["prior_direction_cosine_similarity"] = (
+            pd.Series(cosine, index=result.index)
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+            .clip(-1.0, 1.0)
+        )
+
     result["greedy_score"] = (
-        result["portfolio_smoothed_q02_zscore"] - path_distance_lambda * distance_penalty
+        result["portfolio_smoothed_q02_zscore"]
+        - path_distance_lambda * distance_penalty
+        + path_direction_lambda * result["prior_direction_cosine_similarity"]
     )
     selected = result.sort_values(
         [
             "greedy_score",
+            "prior_direction_cosine_similarity",
             "portfolio_smoothed_q02_zscore",
             "portfolio_smoothed_q02",
             "q02",
@@ -188,7 +238,7 @@ def choose_horizon_portfolio(
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, False, True, True, True],
+        ascending=[False, False, False, False, False, False, True, True, True],
     ).iloc[0]
     result["is_selected"] = False
     result.loc[selected.name, "is_selected"] = True
@@ -241,6 +291,7 @@ def build_greedy_glide_path(
     portfolio_chunk_size: int,
     portfolio_bandwidth: float,
     path_distance_lambda: float,
+    path_direction_lambda: float,
     no_portfolio_smoothing: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
@@ -255,6 +306,8 @@ def build_greedy_glide_path(
         raise ValueError("portfolio_bandwidth must be positive.")
     if path_distance_lambda < 0:
         raise ValueError("path_distance_lambda must be non-negative.")
+    if path_direction_lambda < 0:
+        raise ValueError("path_direction_lambda must be non-negative.")
 
     asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
     weight_matrix = weights.to_numpy(dtype=float)
@@ -323,11 +376,14 @@ def build_greedy_glide_path(
             np.nan if horizon == 1 or no_portfolio_smoothing else portfolio_bandwidth
         )
         horizon_summary["path_distance_lambda"] = path_distance_lambda
+        horizon_summary["path_direction_lambda"] = path_direction_lambda
 
         selected, horizon_summary = choose_horizon_portfolio(
             horizon_summary,
             previous_selected,
+            selected_rows,
             path_distance_lambda,
+            path_direction_lambda,
         )
         selected_index = int(selected.name)
         selected_weight_indexes[horizon] = selected_index
@@ -364,10 +420,14 @@ def build_greedy_glide_path(
         "mean",
         "portfolio_smoothed_q02",
         "portfolio_smoothed_q02_zscore",
+        "prior_direction_cosine_similarity",
         "prior_simplex_step_distance",
         "greedy_score",
         "is_selected",
         "path_distance_lambda",
+        "path_direction_lambda",
+        "prior_simplex_x",
+        "prior_simplex_y",
         "portfolio_bandwidth",
         "simplex_x",
         "simplex_y",
@@ -389,6 +449,7 @@ def write_metadata(
     portfolio_chunk_size: int,
     portfolio_bandwidth: float,
     path_distance_lambda: float,
+    path_direction_lambda: float,
     no_portfolio_smoothing: bool,
 ) -> None:
     metadata = pd.DataFrame(
@@ -407,6 +468,8 @@ def write_metadata(
             ("horizon_smoothing", False),
             ("selection_scale", "per-horizon z-score of portfolio_smoothed_q02"),
             ("path_distance_lambda", path_distance_lambda),
+            ("path_direction_lambda", path_direction_lambda),
+            ("path_direction_term", "added as lambda * cosine_similarity with most recent nonzero step"),
             ("path_direction", "horizon H portfolio is the first year of an H-year path"),
         ],
         columns=["setting", "value"],
@@ -435,6 +498,7 @@ def write_outputs(
     portfolio_chunk_size: int,
     portfolio_bandwidth: float,
     path_distance_lambda: float,
+    path_direction_lambda: float,
     no_portfolio_smoothing: bool,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -468,6 +532,7 @@ def write_outputs(
         portfolio_chunk_size=portfolio_chunk_size,
         portfolio_bandwidth=portfolio_bandwidth,
         path_distance_lambda=path_distance_lambda,
+        path_direction_lambda=path_direction_lambda,
         no_portfolio_smoothing=no_portfolio_smoothing,
     )
 
@@ -494,6 +559,7 @@ def main() -> None:
         portfolio_chunk_size=args.portfolio_chunk_size,
         portfolio_bandwidth=args.portfolio_bandwidth,
         path_distance_lambda=args.path_distance_lambda,
+        path_direction_lambda=args.path_direction_lambda,
         no_portfolio_smoothing=args.no_portfolio_smoothing,
     )
     write_outputs(
@@ -507,6 +573,7 @@ def main() -> None:
         portfolio_chunk_size=args.portfolio_chunk_size,
         portfolio_bandwidth=args.portfolio_bandwidth,
         path_distance_lambda=args.path_distance_lambda,
+        path_direction_lambda=args.path_direction_lambda,
         no_portfolio_smoothing=args.no_portfolio_smoothing,
     )
 
