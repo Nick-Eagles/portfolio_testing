@@ -20,7 +20,7 @@ DEFAULT_NEIGHBORHOOD_RADIUS = 0.12
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot glidepath q02 surfaces before and after portfolio smoothing."
+        description="Plot glidepath worst-4%-mean surfaces before and after portfolio smoothing."
     )
     parser.add_argument(
         "--dataset",
@@ -84,8 +84,8 @@ def load_candidate_summary(input_dir: Path) -> pd.DataFrame:
         "stock_weight",
         "bond_weight",
         "t_bill_weight",
-        "q02",
-        "portfolio_smoothed_q02",
+        "worst_4pct_mean",
+        "portfolio_smoothed_worst_4pct_mean",
         "is_selected",
     }
     missing_columns = required_columns - set(data.columns)
@@ -110,7 +110,15 @@ def get_selected_row(horizon_data: pd.DataFrame) -> pd.Series:
     selected = horizon_data[horizon_data["is_selected"]].copy()
     if selected.empty:
         selected = horizon_data.sort_values(
-            ["portfolio_smoothed_q02", "q02", "mean", "stock_weight", "bond_weight", "t_bill_weight"],
+            [
+                "portfolio_smoothed_worst_4pct_mean",
+                "worst_4pct_mean",
+                "q02",
+                "mean",
+                "stock_weight",
+                "bond_weight",
+                "t_bill_weight",
+            ],
             ascending=[False, False, False, True, True, True],
         ).head(1)
     return selected.iloc[0]
@@ -141,14 +149,14 @@ def plot_before_after_surfaces(
     variant = get_dataset_variant(dataset)
     horizons = get_available_diagnostic_horizons(data)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_pdf = output_dir / "q02_surface_before_after_smoothing_full_simplex.pdf"
+    output_pdf = output_dir / "worst_4pct_mean_surface_before_after_smoothing_full_simplex.pdf"
 
     fig, axes = plt.subplots(len(horizons), 2, figsize=(9.5, 3.8 * len(horizons)), constrained_layout=True)
     if len(horizons) == 1:
         axes = np.array([axes])
     fig.suptitle(
-        f"Glidepath q02 Before and After Portfolio Smoothing: {variant.title_suffix}\n"
-        "Full simplex view; q02 values are annualized real returns",
+        f"Glidepath Worst-4%-Mean Before and After Portfolio Smoothing: {variant.title_suffix}\n"
+        "Full simplex view; values are annualized real returns",
         fontsize=13,
         fontweight="bold",
     )
@@ -156,13 +164,19 @@ def plot_before_after_surfaces(
     for row_index, horizon in enumerate(horizons):
         horizon_data = data[data["horizon"] == horizon].copy()
         selected = get_selected_row(horizon_data)
-        color_min = min(horizon_data["q02"].min(), horizon_data["portfolio_smoothed_q02"].min())
-        color_max = max(horizon_data["q02"].max(), horizon_data["portfolio_smoothed_q02"].max())
+        color_min = min(
+            horizon_data["worst_4pct_mean"].min(),
+            horizon_data["portfolio_smoothed_worst_4pct_mean"].min(),
+        )
+        color_max = max(
+            horizon_data["worst_4pct_mean"].max(),
+            horizon_data["portfolio_smoothed_worst_4pct_mean"].max(),
+        )
 
         for column_index, (value_column, title) in enumerate(
             [
-                ("q02", "Before smoothing"),
-                ("portfolio_smoothed_q02", "After smoothing"),
+                ("worst_4pct_mean", "Before smoothing"),
+                ("portfolio_smoothed_worst_4pct_mean", "After smoothing"),
             ]
         ):
             ax = axes[row_index, column_index]
@@ -190,7 +204,7 @@ def plot_before_after_surfaces(
             ax.set_title(f"{title}, {horizon} years", fontsize=10)
 
         colorbar = fig.colorbar(scatter, ax=axes[row_index, :].tolist(), fraction=0.045, pad=0.02)
-        colorbar.set_label("Annualized q02")
+        colorbar.set_label("Worst-4%-mean annualized return")
 
     fig.savefig(output_pdf)
     plt.close(fig)
@@ -209,13 +223,13 @@ def plot_local_before_after_surfaces(
     variant = get_dataset_variant(dataset)
     horizons = get_available_diagnostic_horizons(data)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_pdf = output_dir / "q02_surface_before_after_smoothing_local_neighborhood.pdf"
+    output_pdf = output_dir / "worst_4pct_mean_surface_before_after_smoothing_local_neighborhood.pdf"
 
     fig, axes = plt.subplots(len(horizons), 2, figsize=(9.5, 3.8 * len(horizons)), constrained_layout=True)
     if len(horizons) == 1:
         axes = np.array([axes])
     fig.suptitle(
-        f"Glidepath q02 Before and After Portfolio Smoothing: {variant.title_suffix}\n"
+        f"Glidepath Worst-4%-Mean Before and After Portfolio Smoothing: {variant.title_suffix}\n"
         f"Local view within {radius:g} simplex units of the selected portfolio",
         fontsize=13,
         fontweight="bold",
@@ -229,13 +243,19 @@ def plot_local_before_after_surfaces(
             + (horizon_data["simplex_y"] - selected["simplex_y"]) ** 2
         )
         local_data = horizon_data[distances <= radius].copy()
-        color_min = min(local_data["q02"].min(), local_data["portfolio_smoothed_q02"].min())
-        color_max = max(local_data["q02"].max(), local_data["portfolio_smoothed_q02"].max())
+        color_min = min(
+            local_data["worst_4pct_mean"].min(),
+            local_data["portfolio_smoothed_worst_4pct_mean"].min(),
+        )
+        color_max = max(
+            local_data["worst_4pct_mean"].max(),
+            local_data["portfolio_smoothed_worst_4pct_mean"].max(),
+        )
 
         for column_index, (value_column, title) in enumerate(
             [
-                ("q02", "Before smoothing"),
-                ("portfolio_smoothed_q02", "After smoothing"),
+                ("worst_4pct_mean", "Before smoothing"),
+                ("portfolio_smoothed_worst_4pct_mean", "After smoothing"),
             ]
         ):
             ax = axes[row_index, column_index]
@@ -267,7 +287,7 @@ def plot_local_before_after_surfaces(
             )
 
         colorbar = fig.colorbar(scatter, ax=axes[row_index, :].tolist(), fraction=0.045, pad=0.02)
-        colorbar.set_label("Annualized q02")
+        colorbar.set_label("Worst-4%-mean annualized return")
 
     fig.savefig(output_pdf)
     plt.close(fig)

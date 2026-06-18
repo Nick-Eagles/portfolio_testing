@@ -26,13 +26,14 @@ DEFAULT_PORTFOLIO_CHUNK_SIZE = 500
 DEFAULT_PATH_DISTANCE_LAMBDA = 2.0
 DEFAULT_PATH_DIRECTION_LAMBDA = 0.0
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
+WORST_TAIL_FRACTION = 0.04
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Greedily construct a dynamic q02-optimized glidepath using stationary "
-            "circular resampling and portfolio-simplex smoothing."
+            "Greedily construct a dynamic worst-4%-mean-optimized glidepath using "
+            "stationary circular resampling and portfolio-simplex smoothing."
         )
     )
     parser.add_argument(
@@ -92,7 +93,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-portfolio-smoothing",
         action="store_true",
-        help="Select from raw q02 values instead of portfolio-smoothed q02 values.",
+        help=(
+            "Select from raw worst-4%-mean values instead of portfolio-smoothed "
+            "worst-4%-mean values."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -121,6 +125,14 @@ def lower_quantiles_in_place(values: np.ndarray) -> tuple[np.ndarray, np.ndarray
     return q01, q02, q10, median
 
 
+def mean_of_worst_tail_fraction(values: np.ndarray, fraction: float) -> np.ndarray:
+    if not 0 < fraction <= 1:
+        raise ValueError("fraction must be in (0, 1].")
+    count = max(1, int(np.ceil(values.shape[0] * fraction)))
+    partitioned = np.partition(values.copy(), count - 1, axis=0)
+    return partitioned[:count].mean(axis=0)
+
+
 def summarize_annualized_returns(annualized_returns: np.ndarray) -> dict[str, np.ndarray]:
     q01, q02, q10, median = lower_quantiles_in_place(annualized_returns.copy())
     return {
@@ -129,6 +141,10 @@ def summarize_annualized_returns(annualized_returns: np.ndarray) -> dict[str, np
         "q10": q10,
         "median": median,
         "mean": annualized_returns.mean(axis=0),
+        "worst_4pct_mean": mean_of_worst_tail_fraction(
+            annualized_returns,
+            WORST_TAIL_FRACTION,
+        ),
     }
 
 
@@ -202,7 +218,9 @@ def choose_horizon_portfolio(
             + (result["simplex_y"] - previous_selected["simplex_y"]) ** 2
         )
 
-    result["portfolio_smoothed_q02_zscore"] = zscore_values(result["portfolio_smoothed_q02"])
+    result["portfolio_smoothed_worst_4pct_mean_zscore"] = zscore_values(
+        result["portfolio_smoothed_worst_4pct_mean"]
+    )
     distance_penalty = result["prior_simplex_step_distance"].fillna(0.0)
     reference_direction = get_reference_direction(selected_rows)
     if reference_direction is None or previous_selected is None:
@@ -222,7 +240,7 @@ def choose_horizon_portfolio(
         )
 
     result["greedy_score"] = (
-        result["portfolio_smoothed_q02_zscore"]
+        result["portfolio_smoothed_worst_4pct_mean_zscore"]
         - path_distance_lambda * distance_penalty
         + path_direction_lambda * result["prior_direction_cosine_similarity"]
     )
@@ -230,15 +248,16 @@ def choose_horizon_portfolio(
         [
             "greedy_score",
             "prior_direction_cosine_similarity",
-            "portfolio_smoothed_q02_zscore",
-            "portfolio_smoothed_q02",
+            "portfolio_smoothed_worst_4pct_mean_zscore",
+            "portfolio_smoothed_worst_4pct_mean",
+            "worst_4pct_mean",
             "q02",
             "mean",
             "stock_weight",
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, False, False, True, True, True],
+        ascending=[False, False, False, False, False, False, False, True, True, True],
     ).iloc[0]
     result["is_selected"] = False
     result.loc[selected.name, "is_selected"] = True
@@ -364,9 +383,15 @@ def build_greedy_glide_path(
         )
         if horizon == 1:
             horizon_summary["portfolio_smoothed_q02"] = horizon_summary["q02"]
+            horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
+                horizon_summary["worst_4pct_mean"]
+            )
         else:
             horizon_summary["portfolio_smoothed_q02"] = (
                 portfolio_kernel @ horizon_summary["q02"].to_numpy(dtype=float)
+            )
+            horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
+                portfolio_kernel @ horizon_summary["worst_4pct_mean"].to_numpy(dtype=float)
             )
 
         horizon_summary["horizon"] = horizon
@@ -396,8 +421,8 @@ def build_greedy_glide_path(
             f"stocks={selected['stock_weight']:.2f}, "
             f"bonds={selected['bond_weight']:.2f}, "
             f"t-bills={selected['t_bill_weight']:.2f}, "
-            f"q02={selected['q02']:.5f}, "
-            f"smoothed_q02={selected['portfolio_smoothed_q02']:.5f}",
+            f"worst_4pct_mean={selected['worst_4pct_mean']:.5f}, "
+            f"smoothed_worst_4pct_mean={selected['portfolio_smoothed_worst_4pct_mean']:.5f}",
             flush=True,
         )
 
@@ -418,8 +443,10 @@ def build_greedy_glide_path(
         "q10",
         "median",
         "mean",
+        "worst_4pct_mean",
         "portfolio_smoothed_q02",
-        "portfolio_smoothed_q02_zscore",
+        "portfolio_smoothed_worst_4pct_mean",
+        "portfolio_smoothed_worst_4pct_mean_zscore",
         "prior_direction_cosine_similarity",
         "prior_simplex_step_distance",
         "greedy_score",
@@ -460,13 +487,14 @@ def write_metadata(
             ("seed", seed),
             ("max_horizon", max_horizon),
             ("portfolio_chunk_size", portfolio_chunk_size),
-            ("quantile_objective", "q02"),
+            ("optimization_objective", "mean of worst 4% annualized outcomes"),
             ("quantile_interpolation", "lower"),
             ("horizon_1_anchor", "exact empirical one-year q02 across observed years"),
+            ("worst_tail_fraction", WORST_TAIL_FRACTION),
             ("portfolio_bandwidth", portfolio_bandwidth),
             ("no_portfolio_smoothing", no_portfolio_smoothing),
             ("horizon_smoothing", False),
-            ("selection_scale", "per-horizon z-score of portfolio_smoothed_q02"),
+            ("selection_scale", "per-horizon z-score of portfolio_smoothed_worst_4pct_mean"),
             ("path_distance_lambda", path_distance_lambda),
             ("path_direction_lambda", path_direction_lambda),
             ("path_direction_term", "added as lambda * cosine_similarity with most recent nonzero step"),
@@ -585,6 +613,8 @@ def main() -> None:
                 "stock_weight",
                 "bond_weight",
                 "t_bill_weight",
+                "worst_4pct_mean",
+                "portfolio_smoothed_worst_4pct_mean",
                 "q02",
                 "portfolio_smoothed_q02",
                 "mean",

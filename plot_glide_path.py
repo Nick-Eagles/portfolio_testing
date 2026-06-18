@@ -73,7 +73,7 @@ def load_glide_path(input_dir: Path) -> pd.DataFrame:
         "bond_weight",
         "t_bill_weight",
         "mean",
-        "portfolio_smoothed_q02",
+        "portfolio_smoothed_worst_4pct_mean",
     }
     missing_columns = required_columns - set(path.columns)
     if missing_columns:
@@ -145,7 +145,7 @@ def plot_path(path: pd.DataFrame, dataset: str, output_dir: Path) -> None:
         )
 
     ax.set_title(
-        f"Greedy Dynamic q02 Glidepath: {variant.title_suffix}{lambda_suffix}",
+        f"Greedy Dynamic Worst-4%-Mean Glidepath: {variant.title_suffix}{lambda_suffix}",
         fontsize=13,
         fontweight="bold",
     )
@@ -169,7 +169,7 @@ def plot_expected_returns(path: pd.DataFrame, dataset: str, output_dir: Path) ->
         linewidth=2.2,
     )
     ax.set_title(
-        f"Expected Return Along the Greedy Dynamic q02 Glidepath: {variant.title_suffix}",
+        f"Expected Return Along the Greedy Dynamic Worst-4%-Mean Glidepath: {variant.title_suffix}",
         fontweight="bold",
         fontsize=15,
     )
@@ -204,7 +204,7 @@ def main() -> None:
                 "stock_weight",
                 "bond_weight",
                 "t_bill_weight",
-                "portfolio_smoothed_q02",
+                "portfolio_smoothed_worst_4pct_mean",
                 "mean",
             ]
         ].to_string(index=False)
