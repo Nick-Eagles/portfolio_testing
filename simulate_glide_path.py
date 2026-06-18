@@ -27,6 +27,7 @@ DEFAULT_PATH_DISTANCE_LAMBDA = 2.0
 DEFAULT_PATH_DIRECTION_LAMBDA = 0.0
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 WORST_TAIL_FRACTION = 0.04
+CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
 
 
 def parse_args() -> argparse.Namespace:
@@ -109,6 +110,10 @@ def parse_args() -> argparse.Namespace:
 
 def get_glide_path_dir(dataset: str) -> Path:
     return get_dataset_variant(dataset).data_dir / "glide_path"
+
+
+def get_checkpoint_levels(num_simulations: int) -> tuple[int, ...]:
+    return tuple(level for level in CHECKPOINT_LEVELS if level < num_simulations)
 
 
 def make_rng(seed: int, dataset: str) -> np.random.Generator:
@@ -281,7 +286,8 @@ def summarize_glidepath_horizon(
     weight_matrix: np.ndarray,
     selected_weight_indexes: dict[int, int],
     portfolio_chunk_size: int,
-) -> pd.DataFrame:
+    checkpoint_levels: tuple[int, ...],
+) -> tuple[pd.DataFrame, dict[int, pd.DataFrame]]:
     suffix_log_growth = np.zeros(paths.shape[0], dtype=float)
     for year_offset in range(1, horizon):
         years_remaining_after_offset = horizon - year_offset
@@ -290,14 +296,25 @@ def summarize_glidepath_horizon(
         suffix_log_growth += np.log1p(selected_returns)
 
     chunks = []
+    checkpoint_chunks: dict[int, list[pd.DataFrame]] = {
+        checkpoint: [] for checkpoint in checkpoint_levels
+    }
     for start in range(0, len(weights), portfolio_chunk_size):
         stop = min(start + portfolio_chunk_size, len(weights))
         first_year_returns = asset_returns[paths[:, 0]] @ weight_matrix[start:stop].T
         terminal_log_growth = np.log1p(first_year_returns) + suffix_log_growth[:, None]
         annualized_returns = np.exp(terminal_log_growth / horizon) - 1
         chunks.append(summarize_candidates(weights.iloc[start:stop], annualized_returns))
+        for checkpoint in checkpoint_levels:
+            checkpoint_chunks[checkpoint].append(
+                summarize_candidates(weights.iloc[start:stop], annualized_returns[:checkpoint])
+            )
 
-    return pd.concat(chunks, ignore_index=True)
+    checkpoint_summaries = {
+        checkpoint: pd.concat(frames, ignore_index=True)
+        for checkpoint, frames in checkpoint_chunks.items()
+    }
+    return pd.concat(chunks, ignore_index=True), checkpoint_summaries
 
 
 def build_greedy_glide_path(
@@ -312,7 +329,7 @@ def build_greedy_glide_path(
     path_distance_lambda: float,
     path_direction_lambda: float,
     no_portfolio_smoothing: bool,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
         raise ValueError("num_simulations must be at least 1.")
     if max_horizon < 1:
@@ -353,16 +370,19 @@ def build_greedy_glide_path(
 
     selected_weight_indexes: dict[int, int] = {}
     candidate_summaries = []
+    checkpoint_candidate_summaries = []
     selected_rows = []
     previous_selected = None
+    checkpoint_levels = get_checkpoint_levels(num_simulations)
 
     for horizon in range(1, max_horizon + 1):
         if horizon == 1:
             horizon_summary = exact_one_year_summary(asset_returns, weights, weight_matrix)
+            horizon_checkpoint_summaries: dict[int, pd.DataFrame] = {}
             num_paths = len(returns)
             print("Horizon 1: exact empirical one-year anchor", flush=True)
         else:
-            horizon_summary = summarize_glidepath_horizon(
+            horizon_summary, horizon_checkpoint_summaries = summarize_glidepath_horizon(
                 horizon=horizon,
                 paths=paths[:, :horizon],
                 asset_returns=asset_returns,
@@ -370,6 +390,7 @@ def build_greedy_glide_path(
                 weight_matrix=weight_matrix,
                 selected_weight_indexes=selected_weight_indexes,
                 portfolio_chunk_size=portfolio_chunk_size,
+                checkpoint_levels=checkpoint_levels,
             )
             num_paths = num_simulations
             print(f"Horizon {horizon}: simulated dynamic paths", flush=True)
@@ -393,6 +414,34 @@ def build_greedy_glide_path(
             horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
                 portfolio_kernel @ horizon_summary["worst_4pct_mean"].to_numpy(dtype=float)
             )
+
+        for checkpoint, checkpoint_summary in horizon_checkpoint_summaries.items():
+            checkpoint_summary = pd.concat(
+                [
+                    checkpoint_summary.reset_index(drop=True),
+                    coords[["simplex_x", "simplex_y"]].reset_index(drop=True),
+                ],
+                axis=1,
+            )
+            checkpoint_summary["portfolio_smoothed_q02"] = (
+                checkpoint_summary["q02"]
+                if no_portfolio_smoothing
+                else portfolio_kernel @ checkpoint_summary["q02"].to_numpy(dtype=float)
+            )
+            checkpoint_summary["portfolio_smoothed_worst_4pct_mean"] = (
+                checkpoint_summary["worst_4pct_mean"]
+                if no_portfolio_smoothing
+                else portfolio_kernel @ checkpoint_summary["worst_4pct_mean"].to_numpy(dtype=float)
+            )
+            checkpoint_summary["horizon"] = horizon
+            checkpoint_summary["block_length"] = BLOCK_LENGTH
+            checkpoint_summary["num_simulations"] = checkpoint
+            checkpoint_summary["portfolio_bandwidth"] = (
+                np.nan if no_portfolio_smoothing else portfolio_bandwidth
+            )
+            checkpoint_summary["path_distance_lambda"] = path_distance_lambda
+            checkpoint_summary["path_direction_lambda"] = path_direction_lambda
+            checkpoint_candidate_summaries.append(checkpoint_summary)
 
         horizon_summary["horizon"] = horizon
         horizon_summary["block_length"] = BLOCK_LENGTH
@@ -459,11 +508,40 @@ def build_greedy_glide_path(
         "simplex_x",
         "simplex_y",
     ]
+    checkpoint_ordered_columns = [
+        "horizon",
+        "stock_weight",
+        "bond_weight",
+        "t_bill_weight",
+        "block_length",
+        "num_simulations",
+        "q01",
+        "q02",
+        "q10",
+        "median",
+        "mean",
+        "worst_4pct_mean",
+        "portfolio_smoothed_q02",
+        "portfolio_smoothed_worst_4pct_mean",
+        "path_distance_lambda",
+        "path_direction_lambda",
+        "portfolio_bandwidth",
+        "simplex_x",
+        "simplex_y",
+    ]
+    checkpoint_summary = (
+        pd.concat(checkpoint_candidate_summaries, ignore_index=True)
+        if checkpoint_candidate_summaries
+        else pd.DataFrame(columns=checkpoint_ordered_columns)
+    )
     return (
         candidate_summary[ordered_columns].sort_values(
             ["horizon", "stock_weight", "bond_weight", "t_bill_weight"]
         ).reset_index(drop=True),
         path[[*ordered_columns, "selected_weight_index", "glidepath_note"]],
+        checkpoint_summary[checkpoint_ordered_columns].sort_values(
+            ["num_simulations", "horizon", "stock_weight", "bond_weight", "t_bill_weight"]
+        ).reset_index(drop=True),
     )
 
 
@@ -518,6 +596,7 @@ def display_path(path: Path) -> Path:
 def write_outputs(
     candidate_summary: pd.DataFrame,
     path: pd.DataFrame,
+    checkpoint_summary: pd.DataFrame,
     output_dir: Path,
     dataset: str,
     num_simulations: int,
@@ -533,21 +612,29 @@ def write_outputs(
 
     candidate_parquet = output_dir / "glide_path_candidate_summary.parquet"
     candidate_csv = output_dir / "glide_path_candidate_summary.csv"
+    checkpoint_parquet = output_dir / "glide_path_candidate_summary_checkpoints.parquet"
+    checkpoint_csv = output_dir / "glide_path_candidate_summary_checkpoints.csv"
     path_parquet = output_dir / "glide_path.parquet"
     path_csv = output_dir / "glide_path.csv"
 
     temp_candidate_parquet = candidate_parquet.with_suffix(".tmp.parquet")
     temp_candidate_csv = candidate_csv.with_suffix(".tmp.csv")
+    temp_checkpoint_parquet = checkpoint_parquet.with_suffix(".tmp.parquet")
+    temp_checkpoint_csv = checkpoint_csv.with_suffix(".tmp.csv")
     temp_path_parquet = path_parquet.with_suffix(".tmp.parquet")
     temp_path_csv = path_csv.with_suffix(".tmp.csv")
 
     candidate_summary.to_parquet(temp_candidate_parquet, index=False)
     candidate_summary.to_csv(temp_candidate_csv, index=False)
+    checkpoint_summary.to_parquet(temp_checkpoint_parquet, index=False)
+    checkpoint_summary.to_csv(temp_checkpoint_csv, index=False)
     path.to_parquet(temp_path_parquet, index=False)
     path.to_csv(temp_path_csv, index=False)
 
     temp_candidate_parquet.replace(candidate_parquet)
     temp_candidate_csv.replace(candidate_csv)
+    temp_checkpoint_parquet.replace(checkpoint_parquet)
+    temp_checkpoint_csv.replace(checkpoint_csv)
     temp_path_parquet.replace(path_parquet)
     temp_path_csv.replace(path_csv)
 
@@ -566,6 +653,8 @@ def write_outputs(
 
     print(f"Wrote {display_path(candidate_parquet)} ({len(candidate_summary):,} rows)")
     print(f"Wrote {display_path(candidate_csv)}")
+    print(f"Wrote {display_path(checkpoint_parquet)} ({len(checkpoint_summary):,} rows)")
+    print(f"Wrote {display_path(checkpoint_csv)}")
     print(f"Wrote {display_path(path_parquet)} ({len(path):,} rows)")
     print(f"Wrote {display_path(path_csv)}")
     print(f"Wrote {display_path(output_dir / 'glide_path_metadata.csv')}")
@@ -577,7 +666,7 @@ def main() -> None:
     weights = generate_portfolio_weights()
     output_dir = args.output_dir if args.output_dir is not None else get_glide_path_dir(args.dataset)
 
-    candidate_summary, path = build_greedy_glide_path(
+    candidate_summary, path, checkpoint_summary = build_greedy_glide_path(
         returns=returns,
         weights=weights,
         dataset=args.dataset,
@@ -593,6 +682,7 @@ def main() -> None:
     write_outputs(
         candidate_summary=candidate_summary,
         path=path,
+        checkpoint_summary=checkpoint_summary,
         output_dir=output_dir,
         dataset=args.dataset,
         num_simulations=args.num_simulations,
