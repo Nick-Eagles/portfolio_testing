@@ -138,6 +138,32 @@ def mean_of_worst_tail_fraction(values: np.ndarray, fraction: float) -> np.ndarr
     return partitioned[:count].mean(axis=0)
 
 
+def project_rows_to_simplex(values: np.ndarray) -> np.ndarray:
+    """Project each row to the nearest point on the unit simplex."""
+    sorted_values = np.sort(values, axis=1)[:, ::-1]
+    cssv = np.cumsum(sorted_values, axis=1) - 1
+    ranks = np.arange(1, values.shape[1] + 1)
+    support = sorted_values - cssv / ranks > 0
+    rho = support.sum(axis=1) - 1
+    theta = cssv[np.arange(values.shape[0]), rho] / (rho + 1)
+    return np.maximum(values - theta[:, None], 0.0)
+
+
+def nearest_portfolio_indexes(
+    projected_weights: np.ndarray,
+    weight_matrix: np.ndarray,
+    portfolio_chunk_size: int,
+) -> np.ndarray:
+    nearest_indexes = np.empty(projected_weights.shape[0], dtype=int)
+    for start in range(0, projected_weights.shape[0], portfolio_chunk_size):
+        stop = min(start + portfolio_chunk_size, projected_weights.shape[0])
+        distances = (
+            (projected_weights[start:stop, None, :] - weight_matrix[None, :, :]) ** 2
+        ).sum(axis=2)
+        nearest_indexes[start:stop] = np.argmin(distances, axis=1)
+    return nearest_indexes
+
+
 def summarize_annualized_returns(annualized_returns: np.ndarray) -> dict[str, np.ndarray]:
     q01, q02, q10, median = lower_quantiles_in_place(annualized_returns.copy())
     return {
@@ -226,6 +252,9 @@ def choose_horizon_portfolio(
     result["portfolio_smoothed_worst_4pct_mean_zscore"] = zscore_values(
         result["portfolio_smoothed_worst_4pct_mean"]
     )
+    result["projected_worst_4pct_mean_zscore"] = zscore_values(
+        result["projected_worst_4pct_mean"]
+    )
     distance_penalty = result["prior_simplex_step_distance"].fillna(0.0)
     reference_direction = get_reference_direction(selected_rows)
     if reference_direction is None or previous_selected is None:
@@ -245,7 +274,7 @@ def choose_horizon_portfolio(
         )
 
     result["greedy_score"] = (
-        result["portfolio_smoothed_worst_4pct_mean_zscore"]
+        result["projected_worst_4pct_mean_zscore"]
         - path_distance_lambda * distance_penalty
         + path_direction_lambda * result["prior_direction_cosine_similarity"]
     )
@@ -253,16 +282,31 @@ def choose_horizon_portfolio(
         [
             "greedy_score",
             "prior_direction_cosine_similarity",
+            "projected_worst_4pct_mean_zscore",
+            "projected_worst_4pct_mean",
+            "worst_4pct_mean",
             "portfolio_smoothed_worst_4pct_mean_zscore",
             "portfolio_smoothed_worst_4pct_mean",
-            "worst_4pct_mean",
             "q02",
             "mean",
             "stock_weight",
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, False, False, False, True, True, True],
+        ascending=[
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            True,
+            True,
+            True,
+        ],
     ).iloc[0]
     result["is_selected"] = False
     result.loc[selected.name, "is_selected"] = True
@@ -317,6 +361,71 @@ def summarize_glidepath_horizon(
     return pd.concat(chunks, ignore_index=True), checkpoint_summaries
 
 
+def summarize_projected_continuation(
+    horizon: int,
+    paths: np.ndarray,
+    asset_returns: np.ndarray,
+    weight_matrix: np.ndarray,
+    selected_weight_indexes: dict[int, int],
+    previous_selected: pd.Series | None,
+    portfolio_chunk_size: int,
+) -> pd.DataFrame:
+    if horizon == 1 or previous_selected is None:
+        raise ValueError("Projected continuation requires a previous selected portfolio.")
+
+    previous_weights = np.array(
+        [
+            previous_selected["stock_weight"],
+            previous_selected["bond_weight"],
+            previous_selected["t_bill_weight"],
+        ],
+        dtype=float,
+    )
+    proposed_continuation_weights = project_rows_to_simplex(
+        weight_matrix + (weight_matrix - previous_weights)
+    )
+    projected_weight_indexes = nearest_portfolio_indexes(
+        projected_weights=proposed_continuation_weights,
+        weight_matrix=weight_matrix,
+        portfolio_chunk_size=portfolio_chunk_size,
+    )
+
+    suffix_log_growth = np.zeros(paths.shape[0], dtype=float)
+    for year_offset in range(2, horizon + 1):
+        years_remaining_after_offset = horizon + 1 - year_offset
+        selected_index = selected_weight_indexes[years_remaining_after_offset]
+        selected_returns = asset_returns[paths[:, year_offset]] @ weight_matrix[selected_index]
+        suffix_log_growth += np.log1p(selected_returns)
+
+    chunks = []
+    for start in range(0, len(weight_matrix), portfolio_chunk_size):
+        stop = min(start + portfolio_chunk_size, len(weight_matrix))
+        candidate_returns = asset_returns[paths[:, 1]] @ weight_matrix[start:stop].T
+        projected_returns = (
+            asset_returns[paths[:, 0]] @ weight_matrix[projected_weight_indexes[start:stop]].T
+        )
+        terminal_log_growth = (
+            np.log1p(projected_returns)
+            + np.log1p(candidate_returns)
+            + suffix_log_growth[:, None]
+        )
+        annualized_returns = np.exp(terminal_log_growth / (horizon + 1)) - 1
+        stats = summarize_annualized_returns(annualized_returns)
+        chunk = pd.DataFrame(
+            {
+                "projected_weight_index": projected_weight_indexes[start:stop],
+                "projected_stock_weight": weight_matrix[projected_weight_indexes[start:stop], 0],
+                "projected_bond_weight": weight_matrix[projected_weight_indexes[start:stop], 1],
+                "projected_t_bill_weight": weight_matrix[projected_weight_indexes[start:stop], 2],
+            }
+        )
+        for column, values in stats.items():
+            chunk[f"projected_{column}"] = values
+        chunks.append(chunk)
+
+    return pd.concat(chunks, ignore_index=True)
+
+
 def build_greedy_glide_path(
     returns: pd.DataFrame,
     weights: pd.DataFrame,
@@ -359,9 +468,10 @@ def build_greedy_glide_path(
         num_simulations=num_simulations,
         rng=rng,
     )
+    resampled_horizon = max_horizon + 1 if max_horizon > 1 else max_horizon
     paths = generate_resampled_paths(
         num_years=len(returns),
-        horizon=max_horizon,
+        horizon=resampled_horizon,
         block_length=BLOCK_LENGTH,
         num_simulations=num_simulations,
         rng=rng,
@@ -407,12 +517,31 @@ def build_greedy_glide_path(
             horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
                 horizon_summary["worst_4pct_mean"]
             )
+            horizon_summary["projected_weight_index"] = np.arange(len(horizon_summary))
+            horizon_summary["projected_stock_weight"] = horizon_summary["stock_weight"]
+            horizon_summary["projected_bond_weight"] = horizon_summary["bond_weight"]
+            horizon_summary["projected_t_bill_weight"] = horizon_summary["t_bill_weight"]
+            for column in ["q01", "q02", "q10", "median", "mean", "worst_4pct_mean"]:
+                horizon_summary[f"projected_{column}"] = horizon_summary[column]
         else:
             horizon_summary["portfolio_smoothed_q02"] = (
                 portfolio_kernel @ horizon_summary["q02"].to_numpy(dtype=float)
             )
             horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
                 portfolio_kernel @ horizon_summary["worst_4pct_mean"].to_numpy(dtype=float)
+            )
+            projected_summary = summarize_projected_continuation(
+                horizon=horizon,
+                paths=paths[:, : horizon + 1],
+                asset_returns=asset_returns,
+                weight_matrix=weight_matrix,
+                selected_weight_indexes=selected_weight_indexes,
+                previous_selected=previous_selected,
+                portfolio_chunk_size=portfolio_chunk_size,
+            )
+            horizon_summary = pd.concat(
+                [horizon_summary.reset_index(drop=True), projected_summary],
+                axis=1,
             )
 
         for checkpoint, checkpoint_summary in horizon_checkpoint_summaries.items():
@@ -496,6 +625,17 @@ def build_greedy_glide_path(
         "portfolio_smoothed_q02",
         "portfolio_smoothed_worst_4pct_mean",
         "portfolio_smoothed_worst_4pct_mean_zscore",
+        "projected_weight_index",
+        "projected_stock_weight",
+        "projected_bond_weight",
+        "projected_t_bill_weight",
+        "projected_q01",
+        "projected_q02",
+        "projected_q10",
+        "projected_median",
+        "projected_mean",
+        "projected_worst_4pct_mean",
+        "projected_worst_4pct_mean_zscore",
         "prior_direction_cosine_similarity",
         "prior_simplex_step_distance",
         "greedy_score",
@@ -564,15 +704,23 @@ def write_metadata(
             ("num_simulations", num_simulations),
             ("seed", seed),
             ("max_horizon", max_horizon),
+            ("projected_continuation_horizon", max_horizon + 1 if max_horizon > 1 else max_horizon),
             ("portfolio_chunk_size", portfolio_chunk_size),
             ("optimization_objective", "mean of worst 4% annualized outcomes"),
             ("quantile_interpolation", "lower"),
-            ("horizon_1_anchor", "exact empirical one-year q02 across observed years"),
+            ("horizon_1_anchor", "exact empirical one-year objective across observed years"),
             ("worst_tail_fraction", WORST_TAIL_FRACTION),
             ("portfolio_bandwidth", portfolio_bandwidth),
             ("no_portfolio_smoothing", no_portfolio_smoothing),
             ("horizon_smoothing", False),
-            ("selection_scale", "per-horizon z-score of portfolio_smoothed_worst_4pct_mean"),
+            (
+                "selection_scale",
+                "per-horizon z-score of projected_worst_4pct_mean with penalties at horizon H",
+            ),
+            (
+                "projected_continuation",
+                "candidate H step is extended one more equal-direction step, projected to simplex and snapped to grid",
+            ),
             ("path_distance_lambda", path_distance_lambda),
             ("path_direction_lambda", path_direction_lambda),
             ("path_direction_term", "added as lambda * cosine_similarity with most recent nonzero step"),
