@@ -30,11 +30,8 @@ MIN_STARTING_AGE = 20
 MAX_STARTING_AGE = 90
 RETIREMENT_AGE = 65
 FIRST_WITHDRAWAL_AGE = 66
-WITHDRAWAL_RATE = 0.04
-POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.20
-POST_RETIREMENT_CONSTRAINT_TAIL_FRACTION = 0.02
-POST_RETIREMENT_MIN_WORST_2PCT_TERMINAL_BALANCE = 0.50
-PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.04
+WITHDRAWAL_RATE = 0.035
+RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.02
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
 
@@ -87,16 +84,6 @@ def parse_args() -> argparse.Namespace:
         help="Reward weight on cosine similarity with the most recent nonzero age step.",
     )
     parser.add_argument(
-        "--post-retirement-min-worst-2pct-terminal-balance",
-        type=float,
-        default=POST_RETIREMENT_MIN_WORST_2PCT_TERMINAL_BALANCE,
-        help=(
-            "Feasibility threshold for the mean terminal wealth ratio over the worst 2% "
-            "of post-retirement paths. The default 0.50 is equivalent to a -50% "
-            "terminal return from the retirement starting balance."
-        ),
-    )
-    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -144,15 +131,7 @@ def summarize_terminal_balances(terminal_balances: np.ndarray) -> dict[str, np.n
         "terminal_mean": terminal_balances.mean(axis=0),
         "terminal_worst_2pct_mean": mean_of_worst_tail_fraction(
             terminal_balances,
-            POST_RETIREMENT_CONSTRAINT_TAIL_FRACTION,
-        ),
-        "terminal_worst_4pct_mean": mean_of_worst_tail_fraction(
-            terminal_balances,
-            PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
-        ),
-        "terminal_worst_20pct_mean": mean_of_worst_tail_fraction(
-            terminal_balances,
-            POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
+            RETIREMENT_OBJECTIVE_TAIL_FRACTION,
         ),
     }
 
@@ -204,8 +183,8 @@ def add_pre_retirement_selection_scores(
         (result["simplex_x"] - next_older_selected["simplex_x"]) ** 2
         + (result["simplex_y"] - next_older_selected["simplex_y"]) ** 2
     )
-    result["projected_terminal_worst_4pct_mean_zscore"] = zscore_values(
-        result["projected_terminal_worst_4pct_mean"]
+    result["projected_terminal_worst_2pct_mean_zscore"] = zscore_values(
+        result["projected_terminal_worst_2pct_mean"]
     )
 
     reference_direction = get_reference_direction(path_rows_descending_age)
@@ -226,7 +205,7 @@ def add_pre_retirement_selection_scores(
         )
 
     result["greedy_score"] = (
-        result["projected_terminal_worst_4pct_mean_zscore"]
+        result["projected_terminal_worst_2pct_mean_zscore"]
         - path_distance_lambda * result["next_older_simplex_step_distance"]
         + path_direction_lambda * result["prior_direction_cosine_similarity"]
     )
@@ -448,9 +427,9 @@ def summarize_pre_retirement_age(
         [
             "greedy_score",
             "prior_direction_cosine_similarity",
-            "projected_terminal_worst_4pct_mean_zscore",
-            "projected_terminal_worst_4pct_mean",
-            "terminal_worst_4pct_mean",
+            "projected_terminal_worst_2pct_mean_zscore",
+            "projected_terminal_worst_2pct_mean",
+            "terminal_worst_2pct_mean",
             "terminal_q02",
             "terminal_mean",
             "stock_weight",
@@ -468,46 +447,17 @@ def summarize_pre_retirement_age(
     }
     return age_summary.loc[selected.name].copy(), age_summary, checkpoint_summaries
 
-
-def choose_post_retirement_portfolio(
-    post_summary: pd.DataFrame,
-    min_worst_2pct_terminal_balance: float,
-) -> pd.Series:
-    feasible = post_summary[
-        post_summary["terminal_worst_2pct_mean"] > min_worst_2pct_terminal_balance
-    ].copy()
-    if feasible.empty:
-        closest = post_summary.sort_values(
-            [
-                "terminal_worst_2pct_mean",
-                "terminal_worst_20pct_mean",
-                "terminal_worst_4pct_mean",
-                "terminal_median",
-                "terminal_mean",
-            ],
-            ascending=[False, False, False, False, False],
-        ).iloc[0]
-        raise ValueError(
-            "No post-retirement fixed portfolio satisfied the worst-2% terminal wealth "
-            f"ratio constraint > {min_worst_2pct_terminal_balance:.2f} "
-            f"(terminal return > {min_worst_2pct_terminal_balance - 1:.2f}). "
-            f"Best worst-2% average wealth ratio was {closest['terminal_worst_2pct_mean']:.3f} "
-            f"(return {closest['terminal_worst_2pct_mean'] - 1:.3f}) for "
-            f"stocks={closest['stock_weight']:.2f}, bonds={closest['bond_weight']:.2f}, "
-            f"t-bills={closest['t_bill_weight']:.2f}."
-        )
-    return feasible.sort_values(
+def choose_post_retirement_portfolio(post_summary: pd.DataFrame) -> pd.Series:
+    return post_summary.sort_values(
         [
-            "terminal_worst_20pct_mean",
             "terminal_worst_2pct_mean",
-            "terminal_worst_4pct_mean",
             "terminal_median",
             "terminal_mean",
             "stock_weight",
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, False, True, True, True],
+        ascending=[False, False, False, True, True, True],
     ).iloc[0]
 
 
@@ -520,7 +470,6 @@ def build_retirement_path(
     portfolio_chunk_size: int,
     path_distance_lambda: float,
     path_direction_lambda: float,
-    post_retirement_min_worst_2pct_terminal_balance: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
         raise ValueError("num_simulations must be at least 1.")
@@ -568,14 +517,7 @@ def build_retirement_path(
     post_summary["phase"] = "post_retirement_fixed"
     post_summary["block_length"] = BLOCK_LENGTH
     post_summary["num_simulations"] = num_simulations
-    post_summary["is_feasible"] = (
-        post_summary["terminal_worst_2pct_mean"]
-        > post_retirement_min_worst_2pct_terminal_balance
-    )
-    post_selected = choose_post_retirement_portfolio(
-        post_summary,
-        post_retirement_min_worst_2pct_terminal_balance,
-    )
+    post_selected = choose_post_retirement_portfolio(post_summary)
     selected_post_index = int(post_selected.name)
     post_summary["is_selected"] = False
     post_summary.loc[post_selected.name, "is_selected"] = True
@@ -586,7 +528,6 @@ def build_retirement_path(
         f"stocks={post_selected['stock_weight']:.2f}, "
         f"bonds={post_selected['bond_weight']:.2f}, "
         f"t-bills={post_selected['t_bill_weight']:.2f}, "
-        f"worst_20pct_terminal_wealth_ratio={post_selected['terminal_worst_20pct_mean']:.3f}, "
         f"worst_2pct_terminal_wealth_ratio={post_selected['terminal_worst_2pct_mean']:.3f}",
         flush=True,
     )
@@ -628,7 +569,7 @@ def build_retirement_path(
     post_path_template["next_older_simplex_step_distance"] = np.nan
     post_path_template["prior_direction_cosine_similarity"] = 0.0
     post_path_template["greedy_score"] = np.nan
-    post_path_template["projected_terminal_worst_4pct_mean_zscore"] = np.nan
+    post_path_template["projected_terminal_worst_2pct_mean_zscore"] = np.nan
     post_path_template["is_selected"] = True
     for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
         row = post_path_template.copy()
@@ -692,8 +633,8 @@ def build_retirement_path(
             f"stocks={selected['stock_weight']:.2f}, "
             f"bonds={selected['bond_weight']:.2f}, "
             f"t-bills={selected['t_bill_weight']:.2f}, "
-            f"terminal_worst_4pct={selected['terminal_worst_4pct_mean']:.3f}, "
-            f"projected_terminal_worst_4pct={selected['projected_terminal_worst_4pct_mean']:.3f}",
+            f"terminal_worst_2pct={selected['terminal_worst_2pct_mean']:.3f}, "
+            f"projected_terminal_worst_2pct={selected['projected_terminal_worst_2pct_mean']:.3f}",
             flush=True,
         )
 
@@ -711,20 +652,11 @@ def build_retirement_path(
 
     candidate_summary["withdrawal_rate"] = WITHDRAWAL_RATE
     candidate_summary["retirement_age"] = RETIREMENT_AGE
-    candidate_summary["post_retirement_min_worst_2pct_terminal_balance"] = (
-        post_retirement_min_worst_2pct_terminal_balance
-    )
     if not checkpoint_summary.empty:
         checkpoint_summary["withdrawal_rate"] = WITHDRAWAL_RATE
         checkpoint_summary["retirement_age"] = RETIREMENT_AGE
-        checkpoint_summary["post_retirement_min_worst_2pct_terminal_balance"] = (
-            post_retirement_min_worst_2pct_terminal_balance
-        )
     path["withdrawal_rate"] = WITHDRAWAL_RATE
     path["retirement_age"] = RETIREMENT_AGE
-    path["post_retirement_min_worst_2pct_terminal_balance"] = (
-        post_retirement_min_worst_2pct_terminal_balance
-    )
 
     return (
         candidate_summary.sort_values(
@@ -745,7 +677,6 @@ def write_metadata(
     portfolio_chunk_size: int,
     path_distance_lambda: float,
     path_direction_lambda: float,
-    post_retirement_min_worst_2pct_terminal_balance: float,
 ) -> None:
     metadata = pd.DataFrame(
         [
@@ -759,19 +690,11 @@ def write_metadata(
             ("withdrawal_rate", WITHDRAWAL_RATE),
             (
                 "post_retirement_objective",
-                "maximize mean terminal balance over worst 20% of paths",
-            ),
-            (
-                "post_retirement_constraint",
-                "mean terminal wealth ratio over worst 2% of paths must exceed configured threshold; return threshold is ratio - 1",
-            ),
-            (
-                "post_retirement_min_worst_2pct_terminal_balance",
-                post_retirement_min_worst_2pct_terminal_balance,
+                "maximize mean terminal balance over worst 2% of paths",
             ),
             (
                 "pre_retirement_objective",
-                "maximize mean terminal balance at age 90 over worst 4% of paths",
+                "maximize mean terminal balance at age 90 over worst 2% of paths",
             ),
             (
                 "pre_retirement_lookahead",
@@ -801,7 +724,6 @@ def write_outputs(
     portfolio_chunk_size: int,
     path_distance_lambda: float,
     path_direction_lambda: float,
-    post_retirement_min_worst_2pct_terminal_balance: float,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -841,9 +763,6 @@ def write_outputs(
         portfolio_chunk_size=portfolio_chunk_size,
         path_distance_lambda=path_distance_lambda,
         path_direction_lambda=path_direction_lambda,
-        post_retirement_min_worst_2pct_terminal_balance=(
-            post_retirement_min_worst_2pct_terminal_balance
-        ),
     )
 
     print(f"Wrote {display_path(candidate_parquet)} ({len(candidate_summary):,} rows)")
@@ -870,9 +789,6 @@ def main() -> None:
         portfolio_chunk_size=args.portfolio_chunk_size,
         path_distance_lambda=args.path_distance_lambda,
         path_direction_lambda=args.path_direction_lambda,
-        post_retirement_min_worst_2pct_terminal_balance=(
-            args.post_retirement_min_worst_2pct_terminal_balance
-        ),
     )
     write_outputs(
         candidate_summary=candidate_summary,
@@ -885,9 +801,6 @@ def main() -> None:
         portfolio_chunk_size=args.portfolio_chunk_size,
         path_distance_lambda=args.path_distance_lambda,
         path_direction_lambda=args.path_direction_lambda,
-        post_retirement_min_worst_2pct_terminal_balance=(
-            args.post_retirement_min_worst_2pct_terminal_balance
-        ),
     )
 
 
