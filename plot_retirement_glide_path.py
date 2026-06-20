@@ -22,7 +22,7 @@ PATH_LABEL_OFFSETS = {
     75: (-0.04, 0.02),
     90: (-0.045, -0.015),
 }
-DIAGNOSTIC_STARTING_AGES = [20, 35, 50, 65]
+DIAGNOSTIC_STARTING_AGES = [25, 35, 50, 65]
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,6 +121,8 @@ def load_candidate_summary(input_dir: Path) -> pd.DataFrame:
         "t_bill_weight",
         "terminal_worst_2pct_mean",
         "projected_terminal_worst_2pct_mean",
+        "projection_steps",
+        "effective_projection_steps",
         "is_selected",
     }
     missing_columns = required_columns - set(data.columns)
@@ -143,7 +145,16 @@ def get_available_label_ages(path: pd.DataFrame) -> list[int]:
 
 def get_available_diagnostic_ages(data: pd.DataFrame) -> list[int]:
     available = set(data["starting_age"].astype(int))
-    return [age for age in DIAGNOSTIC_STARTING_AGES if age in available]
+    ages = []
+    for age in DIAGNOSTIC_STARTING_AGES:
+        if age not in available:
+            continue
+        age_data = data[data["starting_age"].astype(int) == age]
+        projection_steps = pd.to_numeric(age_data["projection_steps"], errors="coerce")
+        effective_steps = pd.to_numeric(age_data["effective_projection_steps"], errors="coerce")
+        if (effective_steps == projection_steps).any():
+            ages.append(age)
+    return ages
 
 
 def add_mean_annual_portfolio_return(path: pd.DataFrame, dataset: str) -> pd.DataFrame:
@@ -257,6 +268,14 @@ def get_selected_row(age_data: pd.DataFrame) -> pd.Series:
     return selected.iloc[0]
 
 
+def get_effective_projection_steps(age_data: pd.DataFrame) -> int:
+    steps = pd.to_numeric(age_data["effective_projection_steps"], errors="coerce")
+    steps = steps.dropna().astype(int).unique()
+    if len(steps) == 0:
+        return 0
+    return int(steps[0])
+
+
 def plot_projected_continuation_surface(
     data: pd.DataFrame,
     dataset: str,
@@ -265,7 +284,7 @@ def plot_projected_continuation_surface(
     variant = get_dataset_variant(dataset)
     ages = get_available_diagnostic_ages(data)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_pdf = output_dir / "retirement_projected_worst_2pct_surface_full_simplex.pdf"
+    output_pdf = output_dir / "retirement_projected_worst_2pct_surface_candidate_neighborhood.pdf"
 
     fig, axes = plt.subplots(
         len(ages),
@@ -277,7 +296,7 @@ def plot_projected_continuation_surface(
         axes = np.array([axes])
     fig.suptitle(
         f"Retirement Projected Continuation Surface: {variant.title_suffix}\n"
-        "Candidate starting-age portfolios colored by actual age-A path and projected one-year-earlier continuation",
+        "Local candidate portfolios colored by actual H path and projected H+N continuation",
         fontsize=13,
         fontweight="bold",
     )
@@ -285,10 +304,14 @@ def plot_projected_continuation_surface(
     for row_index, age in enumerate(ages):
         age_data = data[data["starting_age"] == age].copy()
         selected = get_selected_row(age_data)
+        projection_steps = get_effective_projection_steps(age_data)
         for column_index, (value_column, title) in enumerate(
             [
-                ("terminal_worst_2pct_mean", "Actual selected-age path"),
-                ("projected_terminal_worst_2pct_mean", "Projected one-year-earlier continuation"),
+                ("terminal_worst_2pct_mean", "Actual H path"),
+                (
+                    "projected_terminal_worst_2pct_mean",
+                    f"Projected H+{projection_steps} path",
+                ),
             ]
         ):
             ax = axes[row_index, column_index]
