@@ -119,7 +119,9 @@ def load_candidate_summary(input_dir: Path) -> pd.DataFrame:
         "stock_weight",
         "bond_weight",
         "t_bill_weight",
+        "terminal_worst_4pct_mean",
         "terminal_worst_2pct_mean",
+        "projected_terminal_worst_4pct_mean",
         "projected_terminal_worst_2pct_mean",
         "projection_steps",
         "effective_projection_steps",
@@ -255,6 +257,8 @@ def get_selected_row(age_data: pd.DataFrame) -> pd.Series:
     if selected.empty:
         selected = age_data.sort_values(
             [
+                "projected_terminal_worst_4pct_mean",
+                "terminal_worst_4pct_mean",
                 "projected_terminal_worst_2pct_mean",
                 "terminal_worst_2pct_mean",
                 "terminal_q02",
@@ -284,7 +288,7 @@ def plot_projected_continuation_surface(
     variant = get_dataset_variant(dataset)
     ages = get_available_diagnostic_ages(data)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_pdf = output_dir / "retirement_projected_worst_2pct_surface_candidate_neighborhood.pdf"
+    output_pdf = output_dir / "retirement_projected_worst_4pct_surface_candidate_neighborhood.pdf"
 
     fig, axes = plt.subplots(
         len(ages),
@@ -307,9 +311,9 @@ def plot_projected_continuation_surface(
         projection_steps = get_effective_projection_steps(age_data)
         for column_index, (value_column, title) in enumerate(
             [
-                ("terminal_worst_2pct_mean", "Actual H path"),
+                ("terminal_worst_4pct_mean", "Actual H path"),
                 (
-                    "projected_terminal_worst_2pct_mean",
+                    "projected_terminal_worst_4pct_mean",
                     f"Projected H+{projection_steps} path",
                 ),
             ]
@@ -340,7 +344,7 @@ def plot_projected_continuation_surface(
             draw_simplex_outline(ax)
             ax.set_title(f"{title}, starting age {age}", fontsize=10)
             colorbar = fig.colorbar(scatter, ax=ax, fraction=0.045, pad=0.02)
-            colorbar.set_label("Worst-2% mean terminal wealth ratio")
+            colorbar.set_label("Worst-4% mean terminal wealth ratio")
 
     fig.savefig(output_pdf)
     plt.close(fig)
@@ -371,6 +375,7 @@ def main() -> None:
                 "stock_weight",
                 "bond_weight",
                 "t_bill_weight",
+                "terminal_worst_4pct_mean",
                 "terminal_worst_2pct_mean",
                 "terminal_mean",
             ]

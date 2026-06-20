@@ -33,7 +33,8 @@ MAX_STARTING_AGE = 90
 RETIREMENT_AGE = 65
 FIRST_WITHDRAWAL_AGE = 66
 WITHDRAWAL_RATE = 0.035
-RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.02
+POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.02
+PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.04
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
 
@@ -151,7 +152,11 @@ def summarize_terminal_balances(terminal_balances: np.ndarray) -> dict[str, np.n
         "terminal_mean": terminal_balances.mean(axis=0),
         "terminal_worst_2pct_mean": mean_of_worst_tail_fraction(
             terminal_balances,
-            RETIREMENT_OBJECTIVE_TAIL_FRACTION,
+            POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
+        ),
+        "terminal_worst_4pct_mean": mean_of_worst_tail_fraction(
+            terminal_balances,
+            PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
         ),
     }
 
@@ -215,8 +220,8 @@ def add_pre_retirement_selection_scores(
         (result["simplex_x"] - next_older_selected["simplex_x"]) ** 2
         + (result["simplex_y"] - next_older_selected["simplex_y"]) ** 2
     )
-    result["projected_terminal_worst_2pct_mean_zscore"] = zscore_values(
-        result["projected_terminal_worst_2pct_mean"]
+    result["projected_terminal_worst_4pct_mean_zscore"] = zscore_values(
+        result["projected_terminal_worst_4pct_mean"]
     )
 
     reference_direction = get_reference_direction(path_rows_descending_age)
@@ -237,7 +242,7 @@ def add_pre_retirement_selection_scores(
         )
 
     result["greedy_score"] = (
-        result["projected_terminal_worst_2pct_mean_zscore"]
+        result["projected_terminal_worst_4pct_mean_zscore"]
         - path_distance_lambda * result["next_older_simplex_step_distance"]
         + path_direction_lambda * result["prior_direction_cosine_similarity"]
     )
@@ -501,7 +506,9 @@ def summarize_pre_retirement_age(
         [
             "greedy_score",
             "prior_direction_cosine_similarity",
-            "projected_terminal_worst_2pct_mean_zscore",
+            "projected_terminal_worst_4pct_mean_zscore",
+            "projected_terminal_worst_4pct_mean",
+            "terminal_worst_4pct_mean",
             "projected_terminal_worst_2pct_mean",
             "terminal_worst_2pct_mean",
             "terminal_q02",
@@ -510,7 +517,7 @@ def summarize_pre_retirement_age(
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, False, False, False, True, True, True],
+        ascending=[False, False, False, False, False, False, False, False, False, True, True, True],
     ).iloc[0]
     age_summary["is_selected"] = False
     age_summary.loc[selected.name, "is_selected"] = True
@@ -652,7 +659,7 @@ def build_retirement_path(
     post_path_template["greedy_score"] = np.nan
     post_path_template["projection_steps"] = projection_steps
     post_path_template["effective_projection_steps"] = np.nan
-    post_path_template["projected_terminal_worst_2pct_mean_zscore"] = np.nan
+    post_path_template["projected_terminal_worst_4pct_mean_zscore"] = np.nan
     post_path_template["is_selected"] = True
     for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
         row = post_path_template.copy()
@@ -719,8 +726,8 @@ def build_retirement_path(
             f"stocks={selected['stock_weight']:.2f}, "
             f"bonds={selected['bond_weight']:.2f}, "
             f"t-bills={selected['t_bill_weight']:.2f}, "
-            f"terminal_worst_2pct={selected['terminal_worst_2pct_mean']:.3f}, "
-            f"projected_terminal_worst_2pct={selected['projected_terminal_worst_2pct_mean']:.3f}",
+            f"terminal_worst_4pct={selected['terminal_worst_4pct_mean']:.3f}, "
+            f"projected_terminal_worst_4pct={selected['projected_terminal_worst_4pct_mean']:.3f}",
             flush=True,
         )
 
@@ -782,7 +789,7 @@ def write_metadata(
             ),
             (
                 "pre_retirement_objective",
-                "maximize mean terminal balance at age 90 over worst 2% of paths",
+                "maximize mean terminal balance at age 90 over worst 4% of paths",
             ),
             (
                 "pre_retirement_lookahead",
