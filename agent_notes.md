@@ -1,6 +1,6 @@
 # Agent Notes
 
-These notes preserve the current project context for future chats.
+These notes preserve the current working context for future chats.
 
 ## Repo Setup
 
@@ -30,52 +30,65 @@ Canonical output layout:
 - `data/<dataset>/`
 - `plots/<dataset>/`
 
-## Modeling Direction
+## Big Picture
 
-The rolling-window approach once existed and produced useful early comparisons. It has been removed from the repo. Stationary circular resampling was determined to be superior for accurately and precisely computing realistic statistics because it can generate many synthetic paths while preserving contiguous historical asset interactions.
+The project still aims to recommend how someone should invest given how much time they have left, using only broad asset classes and preferring simple conclusions.
+
+There are now two distinct arms of the project:
+
+- The fixed-portfolio arm: older, more established, and currently the main baseline.
+- The glide path arm: newer and explicitly experimental.
+
+The glide path work should not be described as settled, final, or clearly superior. It exists because the user wants to test whether a time-varying recommendation can answer the original question more directly than the fixed-portfolio workflow.
+
+## Shared Modeling Choices
+
+The rolling-window approach existed earlier and was helpful for exploration, but it has been removed from the repo. Stationary circular resampling was judged better because it produces many more synthetic paths while preserving contiguous historical interactions among the assets.
 
 Portfolio weights use a deterministic 2% grid over the 3-asset simplex, giving 1,326 portfolios. This replaced earlier random Dirichlet sampling because the grid is reproducible and evenly covers the simplex.
 
-Portfolio simulations use annual rebalancing: each year's portfolio return is computed as the dot product of that year's asset returns and the fixed target weights.
+Portfolio simulations use annual rebalancing: each year's portfolio return is computed as the dot product of that year's asset returns and that year's target weights.
 
-Current simulation settings:
-
-- block lengths: `3, 5, 10, 15, 20`
-- horizons: `1` through `50`
-- simulations: `50,000` per block length and horizon
-- summaries are annualized returns
-- stored stats: `q01`, `q02`, `q10`, `median`, `mean`
-
-Core simulation outputs:
-
-- `data/<dataset>/portfolio_return_summary.parquet`
-- `data/<dataset>/portfolio_return_summary_checkpoints.parquet`
-
-The checkpoint file stores cumulative simulation-count summaries at `10000`, `20000`, `30000`, and `40000`. The full `50000` run is in the main parquet.
-
-Horizon 1 is a boundary case. In the 99-year `from_1927` dataset, q02 is the 2nd-worst observed one-year return under lower interpolation, and a naive 50,000-row random resample can randomly flip between the 2nd- and 3rd-worst year because the two-year cumulative count is close to the q02 cutoff. Future simulations use a balanced horizon-1 starting-year sample shared across block lengths. The smoothing loader also replaces horizon-1 q02/mean/median with exact one-year empirical stats before smoothing and path optimization, so block length cannot change the raw horizon-1 optimum through Monte Carlo count noise.
-
-Lower-tail quantiles should use lower interpolation:
+Lower-tail quantiles use lower interpolation:
 
 ```python
 kth = floor((n - 1) * quantile)
 np.partition(values, kth, axis=0)[kth]
 ```
 
-## Current Scripts
+## Fixed-Portfolio Arm
 
-- `dataset_variants.py`: dataset metadata and canonical paths.
-- `portfolio_helpers.py`: return columns, grid step, horizon constant, and portfolio grid generation.
-- `build_asset_class_returns.py`: extracts asset-return CSVs and growth-of-$1 plots.
-- `simulate_returns.py`: builds the main resampled return summary parquet and checkpoint parquet.
-- `convex_smoothing.py`: shared smoothing, simplex-coordinate, pure-asset, and path-optimization helpers.
-- `build_smoothed_stats.py`: builds the central smoothed q02 stats artifact and smoothing diagnostics.
-- `plot_smoothed_q02_results.py`: builds the all-assets-vs-no-bonds plot, smoothed q02 surface plots, and pure-asset q02 line plot.
-- `plot_smoothed_optimal_path.py`: builds the optimal path plot, return-cost plot, and expected-return-along-path plot.
+This arm is still important because it established most of the simulation and smoothing machinery.
 
-## Current Workflow
+Core scripts:
 
-After the source asset returns and main return summary exist, the modern downstream workflow is:
+- `simulate_returns.py`
+- `build_smoothed_stats.py`
+- `plot_smoothed_q02_results.py`
+- `plot_smoothed_optimal_path.py`
+- `convex_smoothing.py`
+
+Current raw simulation settings:
+
+- block lengths: `3, 5, 10, 15, 20`
+- horizons: `1` through `50`
+- simulations: `50,000` per block length and horizon
+- summaries are annualized returns
+- stored stats in the main summary include `q01`, `q02`, `q10`, `median`, and `mean`
+
+Core outputs:
+
+- `data/<dataset>/portfolio_return_summary.parquet`
+- `data/<dataset>/portfolio_return_summary_checkpoints.parquet`
+
+What this arm taught us:
+
+- `q02` was a useful conservative objective, but it can be noisy because tiny order-statistic changes can move the optimum around.
+- Smoothing across horizons and across the simplex was very helpful for making the fixed-portfolio surfaces and resulting paths interpretable.
+- Horizon 1 was a real edge case. In the 99-year `from_1927` sample, `q02` effectively sits at the 2nd-worst observed year, so Monte Carlo count noise could flip the optimum unless horizon 1 was treated carefully.
+- Future simulations therefore use a balanced horizon-1 starting-year sample, and the smoothing loader replaces horizon-1 `q02` and related one-year stats with exact empirical values before smoothing/path optimization.
+
+The established fixed-portfolio workflow is still:
 
 ```bash
 uv run python build_smoothed_stats.py --dataset from_1927
@@ -83,40 +96,68 @@ uv run python plot_smoothed_q02_results.py --dataset from_1927
 uv run python plot_smoothed_optimal_path.py --dataset from_1927
 ```
 
-`build_smoothed_stats.py` reads:
+## Glide Path Arm
 
-- `data/<dataset>/portfolio_return_summary.parquet`
+This arm tries to optimize a path of portfolios rather than one fixed portfolio per horizon.
 
-and writes:
+Core scripts:
 
-- `data/<dataset>/portfolio_smoothed_q02_stats.parquet`
-- `data/<dataset>/portfolio_smoothed_q02_metadata.csv`
-- `plots/<dataset>/smoothing_diagnostics/q02_surface_before_after_smoothing.pdf`
-- `plots/<dataset>/pure_asset_EDA/pure_assets_q02_horizon_smoothing.pdf`
+- `simulate_glide_path.py`
+- `simulate_glide_path_lookahead.py`
+- `plot_glide_path.py`
+- `plot_glide_path_smoothing_diagnostics.py`
+- `q02_diff_density.py`
 
-`plot_smoothed_q02_results.py` writes:
+Current main glide path settings:
 
-- `plots/<dataset>/optimal_portfolio_patterns/all_assets_vs_no_bonds_q02_line_plot.pdf`
-- `plots/<dataset>/optimal_portfolio_patterns/smoothed_q02_surface_selected_horizons.pdf`
-- `plots/<dataset>/pure_asset_EDA/pure_assets_q02_line_plot.pdf`
-- `data/<dataset>/all_assets_vs_no_bonds_q02_summary.csv`
+- block length: `10`
+- horizons: `1` through `50`
+- default simulations in the main script: `20,000`
+- summaries include `q01`, `q02`, `q10`, `median`, `mean`, and `worst_4pct_mean`
+- outputs live under `data/<dataset>/glide_path/` and `plots/<dataset>/glide_path/`
 
-`plot_smoothed_optimal_path.py` writes:
+Important changes from earlier glide path attempts:
 
-- `plots/<dataset>/optimal_portfolio_patterns/smoothed_optimal_path.pdf`
-- `plots/<dataset>/optimal_portfolio_patterns/smoothed_optimal_path_return_cost.pdf`
-- `plots/<dataset>/optimal_portfolio_patterns/smoothed_optimal_path_expected_returns.pdf`
-- `data/<dataset>/smoothed_optimal_path.csv`
-- `data/<dataset>/smoothed_optimal_path_return_cost.csv`
+- The objective is now `worst_4pct_mean`, the mean annualized return across the worst 4% of outcomes.
+- This metric is currently preferred over `q02` because it appears smoother across horizons and across nearby portfolios.
+- Horizon 1 is now anchored using the exact empirical `worst_4pct_mean`. For the 99-year `from_1927` sample, that means averaging the worst 4 one-year outcomes.
+- The main script no longer uses the expensive pairwise local lookahead as its default logic.
+- Instead, for each candidate at horizon `H`, the main script projects one more step in the same simplex direction and scores the projected `H + 1` path, while still committing only the horizon-`H` decision.
+- If the projected continuation leaves the simplex, it is projected back to the valid simplex and snapped to the nearest grid portfolio.
+- `simulate_glide_path_lookahead.py` preserves the more expensive local one-step lookahead variant for experimentation and comparison.
+
+What we have learned so far in the glide path arm:
+
+- The first naive idea of reading the fixed-portfolio optimum path as if it were already a glide path was mistaken. In the older arm, each horizon was optimized assuming a single fixed portfolio for the full horizon.
+- Raw glide path surfaces can still be noisy, and a lot of the current experimentation is about distinguishing real structure from artifacts of the objective function.
+- The projected extra-step scoring idea is a computational compromise: it tries to ask whether the current step is sensible if continued, without paying the full cost of evaluating all candidate pairs.
+- Smoothing diagnostics are now especially important because the key question is whether introducing the extra projected step makes portfolio smoothing more or less necessary.
+- The diagnostics script now produces both global and local simplex views, including projected `H + 1` surfaces and before/after smoothing comparisons for the projected downside metric.
+
+Current glide path outputs include:
+
+- `data/<dataset>/glide_path/glide_path_candidate_summary.parquet`
+- `data/<dataset>/glide_path/glide_path_candidate_summary_checkpoints.parquet`
+- `data/<dataset>/glide_path/glide_path.parquet`
+- `data/<dataset>/glide_path/glide_path_metadata.csv`
+- `plots/<dataset>/glide_path/glide_path.pdf`
+- `plots/<dataset>/glide_path/glide_path_expected_returns.pdf`
+- `plots/<dataset>/glide_path/smoothing_diagnostics/`
+
+## Convergence Diagnostics
+
+`q02_diff_density.py` is no longer just about `q02`. It was extended to support the glide path arm and the newer downside metric as well. Recent work used it with no smoothing or regularization to compare checkpoint runs against the larger reference run.
 
 ## Interpretation Notes
 
-The main conservative objective is lower-tail annualized return, especially q02. The current smoothed workflow defaults to `from_1927`, block length `10`, horizon bandwidth `0.17` on `sqrt(horizon)`, portfolio bandwidth `0.01`, and path distance lambda `0.02`.
+Do not over-interpret a single optimal point when nearby portfolios perform similarly.
 
-The smoothed-return cost comparison is evaluated on the smoothed q02 surface. It compares the smoothed per-horizon optimum with the jointly optimized path to isolate the effect of the path-distance lambda from the smoothing parameters.
+The user cares about:
 
-Bonds add the most conservative lower-tail value at short/intermediate horizons. At longer horizons, the no-bonds optimum becomes very close to the all-assets optimum, and eventually disappears once the all-assets optimum is stock-heavy.
-
-Do not over-interpret a single optimal point when nearby portfolios perform similarly. The user cares about path stability, near-optimal regions, the value of bonds, and substitution patterns among stocks, bonds, and T-bills.
+- path stability
+- near-optimal regions rather than just one point estimate
+- the value of bonds relative to a no-bonds alternative
+- whether an apparently better objective is actually giving a cleaner, more believable recommendation
+- whether extra modeling machinery is genuinely helpful or only adding noise and complexity
 
 Generated CSVs, gzipped CSVs, parquet files, temporary files, and Excel workbooks under `data/` are ignored by git.
