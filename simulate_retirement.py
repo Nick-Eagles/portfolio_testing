@@ -24,10 +24,10 @@ BLOCK_LENGTH = 10
 NUM_SIMULATIONS = 20_000
 DEFAULT_SEED = 20260620
 DEFAULT_PORTFOLIO_CHUNK_SIZE = 500
-DEFAULT_PATH_DISTANCE_LAMBDA = 2.0
+DEFAULT_PATH_DISTANCE_LAMBDA = 0.0
 DEFAULT_PATH_DIRECTION_LAMBDA = 0.0
 DEFAULT_CANDIDATE_RADIUS = 0.10
-DEFAULT_PROJECTION_STEPS = 1
+DEFAULT_PROJECTION_STEPS = 4
 MIN_STARTING_AGE = 20
 MAX_STARTING_AGE = 90
 RETIREMENT_AGE = 65
@@ -37,6 +37,7 @@ POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.02
 PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.04
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
+WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
 
 
 def age_path_offset(age: int) -> int:
@@ -277,6 +278,52 @@ def retirement_balance_ratios_for_paths(
         year_returns = annual_returns[paths[:, age_path_offset(age)], selected_index]
         balances *= 1 + year_returns
     return balances / starting_balance
+
+
+def terminal_balances_by_starting_age_for_weight_path(
+    paths: np.ndarray,
+    asset_returns: np.ndarray,
+    age_weight_path: pd.DataFrame,
+) -> dict[int, np.ndarray]:
+    required_columns = {"starting_age", *WEIGHT_COLUMNS}
+    missing_columns = required_columns - set(age_weight_path.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"age_weight_path is missing required columns: {missing}")
+
+    path = age_weight_path.sort_values("starting_age").reset_index(drop=True)
+    expected_ages = list(range(MIN_STARTING_AGE, MAX_STARTING_AGE + 1))
+    ages = path["starting_age"].astype(int).tolist()
+    if ages != expected_ages:
+        raise ValueError(
+            f"age_weight_path must contain ages {MIN_STARTING_AGE} through {MAX_STARTING_AGE}."
+        )
+
+    weight_sums = path[WEIGHT_COLUMNS].sum(axis=1)
+    if not weight_sums.between(0.999999, 1.000001).all():
+        raise ValueError("Each age_weight_path row must sum to 1.0.")
+
+    weights_by_age = {
+        int(row["starting_age"]): row[WEIGHT_COLUMNS].to_numpy(dtype=float)
+        for _, row in path.iterrows()
+    }
+    portfolio_returns_by_age = {
+        age: asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
+        for age in expected_ages
+    }
+
+    post_retirement_balances = np.ones(paths.shape[0], dtype=float)
+    for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
+        post_retirement_balances -= WITHDRAWAL_RATE
+        post_retirement_balances *= 1 + portfolio_returns_by_age[age]
+
+    terminal_balances = {FIRST_WITHDRAWAL_AGE: post_retirement_balances}
+    pre_retirement_growth = np.ones(paths.shape[0], dtype=float)
+    for age in range(RETIREMENT_AGE, MIN_STARTING_AGE - 1, -1):
+        pre_retirement_growth *= 1 + portfolio_returns_by_age[age]
+        terminal_balances[age] = pre_retirement_growth * post_retirement_balances
+
+    return terminal_balances
 
 
 def fixed_post_retirement_terminal_balances(
