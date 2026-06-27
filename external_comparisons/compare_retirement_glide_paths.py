@@ -51,6 +51,7 @@ PRE_RETIREMENT_METRICS = [
     ("terminal_worst_50pct_mean", "Worst 50%"),
     ("terminal_mean", "Expected Value"),
 ]
+POST_RETIREMENT_METRICS = PRE_RETIREMENT_METRICS
 
 
 def parse_args() -> argparse.Namespace:
@@ -291,12 +292,25 @@ def evaluate_paths(
             {
                 "approach": approach,
                 "starting_age": FIRST_WITHDRAWAL_AGE,
+                "terminal_worst_1pct_mean": float(
+                    mean_of_worst_tail_fraction(terminal_balances[FIRST_WITHDRAWAL_AGE], 0.01)
+                ),
                 "terminal_worst_2pct_mean": float(
                     mean_of_worst_tail_fraction(
                         terminal_balances[FIRST_WITHDRAWAL_AGE],
                         POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
                     )
                 ),
+                "terminal_worst_4pct_mean": float(
+                    mean_of_worst_tail_fraction(terminal_balances[FIRST_WITHDRAWAL_AGE], 0.04)
+                ),
+                "terminal_worst_10pct_mean": float(
+                    mean_of_worst_tail_fraction(terminal_balances[FIRST_WITHDRAWAL_AGE], 0.10)
+                ),
+                "terminal_worst_50pct_mean": float(
+                    mean_of_worst_tail_fraction(terminal_balances[FIRST_WITHDRAWAL_AGE], 0.50)
+                ),
+                "terminal_mean": float(terminal_balances[FIRST_WITHDRAWAL_AGE].mean()),
             }
         )
 
@@ -343,12 +357,40 @@ def write_outputs(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     pre_csv = output_dir / "retirement_comparison_pre_retirement_metrics.csv"
-    post_csv = output_dir / "retirement_comparison_post_retirement_worst_2pct.csv"
+    post_csv = output_dir / "retirement_comparison_post_retirement_metrics.csv"
     pre_retirement.to_csv(pre_csv, index=False)
     post_retirement.to_csv(post_csv, index=False)
     print(f"Wrote {display_path(pre_csv)}")
     print(f"Wrote {display_path(post_csv)}")
     plot_pre_retirement_worst_4pct(pre_retirement, output_dir)
+    plot_post_retirement_metrics(post_retirement, output_dir)
+
+
+def plot_post_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
+    output_pdf = output_dir / "retirement_comparison_post_retirement_grid.pdf"
+    fig, axes = plt.subplots(3, 2, figsize=(12, 11), constrained_layout=True)
+    axes_flat = axes.flatten()
+    approach_order = list(APPROACH_COLORS)
+
+    for ax, (metric_column, panel_title) in zip(axes_flat, POST_RETIREMENT_METRICS):
+        metric_values = (
+            data.set_index("approach")[metric_column]
+            .reindex(approach_order)
+        )
+        bar_colors = [APPROACH_COLORS[approach] for approach in approach_order]
+        ax.bar(approach_order, metric_values.to_numpy(dtype=float), color=bar_colors, width=0.7)
+        ax.set_title(panel_title, fontweight="bold", fontsize=11)
+        ax.grid(axis="y", alpha=0.2)
+        ax.tick_params(axis="x", rotation=0)
+
+    for ax in axes[-1]:
+        ax.set_xlabel("Approach")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Terminal wealth ratio")
+
+    fig.savefig(output_pdf)
+    plt.close(fig)
+    print(f"Wrote {display_path(output_pdf)}")
 
 
 def use_shared_post_retirement_block(
@@ -400,14 +442,6 @@ def main() -> None:
         pre_retirement=pre_retirement,
         post_retirement=post_retirement,
         output_dir=args.output_dir,
-    )
-
-    print("Post-retirement terminal worst-2% wealth ratios at age 90:")
-    print(
-        post_retirement.sort_values("terminal_worst_2pct_mean", ascending=False).to_string(
-            index=False,
-            float_format=lambda value: f"{value:.4f}",
-        )
     )
 
 
