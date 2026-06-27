@@ -41,6 +41,14 @@ APPROACH_COLORS = {
     "Vanguard": "#1f77b4",
     "Fidelity": "#2ca02c",
 }
+PRE_RETIREMENT_METRICS = [
+    ("terminal_worst_1pct_mean", "Worst 1%"),
+    ("terminal_worst_2pct_mean", "Worst 2%"),
+    ("terminal_worst_4pct_mean", "Worst 4%"),
+    ("terminal_worst_10pct_mean", "Worst 10%"),
+    ("terminal_worst_50pct_mean", "Worst 50%"),
+    ("terminal_mean", "Expected Value"),
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -179,16 +187,19 @@ def evaluate_paths(
             age_weight_path=weight_path,
         )
         for age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
+            balances = terminal_balances[age]
             pre_rows.append(
                 {
                     "approach": approach,
                     "starting_age": age,
+                    "terminal_worst_1pct_mean": float(mean_of_worst_tail_fraction(balances, 0.01)),
+                    "terminal_worst_2pct_mean": float(mean_of_worst_tail_fraction(balances, 0.02)),
                     "terminal_worst_4pct_mean": float(
-                        mean_of_worst_tail_fraction(
-                            terminal_balances[age],
-                            PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
-                        )
+                        mean_of_worst_tail_fraction(balances, PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION)
                     ),
+                    "terminal_worst_10pct_mean": float(mean_of_worst_tail_fraction(balances, 0.10)),
+                    "terminal_worst_50pct_mean": float(mean_of_worst_tail_fraction(balances, 0.50)),
+                    "terminal_mean": float(balances.mean()),
                 }
             )
 
@@ -224,22 +235,30 @@ def evaluate_paths(
 
 
 def plot_pre_retirement_worst_4pct(data: pd.DataFrame, output_dir: Path) -> None:
-    output_pdf = output_dir / "retirement_comparison_pre_retirement_worst_4pct.pdf"
-    fig, ax = plt.subplots(figsize=(10, 5.8), constrained_layout=True)
-    for approach, approach_data in data.groupby("approach", sort=False):
-        ax.plot(
-            approach_data["starting_age"],
-            approach_data["terminal_worst_4pct_mean"],
-            color=APPROACH_COLORS.get(approach),
-            linewidth=2.2,
-            label=approach,
-        )
-    ax.set_title("Worst-4% Terminal Wealth by Pre-Retirement Starting Age", fontweight="bold")
-    ax.set_xlabel("Starting age")
-    ax.set_ylabel("Mean terminal wealth ratio among worst 4%")
-    ax.set_xlim(MIN_STARTING_AGE, RETIREMENT_AGE)
-    ax.grid(alpha=0.2)
-    ax.legend(frameon=False)
+    output_pdf = output_dir / "retirement_comparison_pre_retirement_grid.pdf"
+    fig, axes = plt.subplots(3, 2, figsize=(12, 11), constrained_layout=True, sharex=True)
+    axes_flat = axes.flatten()
+
+    for ax, (metric_column, panel_title) in zip(axes_flat, PRE_RETIREMENT_METRICS):
+        for approach, approach_data in data.groupby("approach", sort=False):
+            ax.plot(
+                approach_data["starting_age"],
+                approach_data[metric_column],
+                color=APPROACH_COLORS.get(approach),
+                linewidth=2.0,
+                label=approach,
+            )
+        ax.set_title(panel_title, fontweight="bold", fontsize=11)
+        ax.set_xlim(MIN_STARTING_AGE, RETIREMENT_AGE)
+        ax.grid(alpha=0.2)
+
+    for ax in axes[-1]:
+        ax.set_xlabel("Starting age")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Terminal wealth ratio")
+
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.01))
     fig.savefig(output_pdf)
     plt.close(fig)
     print(f"Wrote {display_path(output_pdf)}")
@@ -274,7 +293,7 @@ def write_outputs(
     output_dir: Path,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    pre_csv = output_dir / "retirement_comparison_pre_retirement_worst_4pct.csv"
+    pre_csv = output_dir / "retirement_comparison_pre_retirement_metrics.csv"
     post_csv = output_dir / "retirement_comparison_post_retirement_worst_2pct.csv"
     expected_csv = output_dir / "retirement_comparison_expected_returns.csv"
     pre_retirement.to_csv(pre_csv, index=False)
