@@ -24,7 +24,9 @@ from simulate_retirement import (
     PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
     POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
     RETIREMENT_AGE,
+    WITHDRAWAL_RATE,
     WEIGHT_COLUMNS,
+    age_path_offset,
     make_rng,
     terminal_balances_by_starting_age_for_weight_path,
 )
@@ -81,6 +83,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory containing retirement_path.parquet or .csv.",
+    )
+    parser.add_argument(
+        "--annual-contribution",
+        type=float,
+        default=1.0,
+        help=(
+            "Constant real contribution made at the beginning of each pre-retirement "
+            "year. Pre-retirement results are normalized by total contributed dollars."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -169,14 +180,106 @@ def make_shared_paths(
     )
 
 
+def post_retirement_balance_ratios(
+    paths: np.ndarray,
+    asset_returns: np.ndarray,
+    age_weight_path: pd.DataFrame,
+) -> np.ndarray:
+    weights_by_age = {
+        int(row["starting_age"]): row[WEIGHT_COLUMNS].to_numpy(dtype=float)
+        for _, row in age_weight_path.iterrows()
+    }
+    balances = np.ones(paths.shape[0], dtype=float)
+    for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
+        balances -= WITHDRAWAL_RATE
+        year_returns = asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
+        balances *= 1 + year_returns
+    return balances
+
+
+def terminal_balances_with_contributions(
+    paths: np.ndarray,
+    asset_returns: np.ndarray,
+    age_weight_path: pd.DataFrame,
+    annual_contribution: float,
+) -> dict[int, np.ndarray]:
+    weights_by_age = {
+        int(row["starting_age"]): row[WEIGHT_COLUMNS].to_numpy(dtype=float)
+        for _, row in age_weight_path.iterrows()
+    }
+    post_ratios = post_retirement_balance_ratios(
+        paths=paths,
+        asset_returns=asset_returns,
+        age_weight_path=age_weight_path,
+    )
+    result = {}
+    for start_age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
+        balances = np.zeros(paths.shape[0], dtype=float)
+        for age in range(start_age, RETIREMENT_AGE + 1):
+            balances += annual_contribution
+            year_returns = asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
+            balances *= 1 + year_returns
+        total_contributed = annual_contribution * (RETIREMENT_AGE - start_age + 1)
+        result[start_age] = balances * post_ratios / total_contributed
+    return result
+
+
+def summarize_pre_retirement_contribution_paths(
+    paths: np.ndarray,
+    asset_returns: np.ndarray,
+    strategies: dict[str, pd.DataFrame],
+    annual_contribution: float,
+) -> pd.DataFrame:
+    if annual_contribution <= 0:
+        raise ValueError("annual_contribution must be positive.")
+
+    rows = []
+    for approach, weight_path in strategies.items():
+        terminal_balances = terminal_balances_with_contributions(
+            paths=paths,
+            asset_returns=asset_returns,
+            age_weight_path=weight_path,
+            annual_contribution=annual_contribution,
+        )
+        for age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
+            balances = terminal_balances[age]
+            rows.append(
+                {
+                    "approach": approach,
+                    "starting_age": age,
+                    "terminal_worst_1pct_mean": float(mean_of_worst_tail_fraction(balances, 0.01)),
+                    "terminal_worst_2pct_mean": float(mean_of_worst_tail_fraction(balances, 0.02)),
+                    "terminal_worst_4pct_mean": float(
+                        mean_of_worst_tail_fraction(
+                            balances,
+                            PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
+                        )
+                    ),
+                    "terminal_worst_10pct_mean": float(mean_of_worst_tail_fraction(balances, 0.10)),
+                    "terminal_worst_50pct_mean": float(mean_of_worst_tail_fraction(balances, 0.50)),
+                    "terminal_mean": float(balances.mean()),
+                    "annual_contribution": annual_contribution,
+                    "normalization": "terminal wealth divided by total real pre-retirement contributions",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def evaluate_paths(
     returns: pd.DataFrame,
     paths: np.ndarray,
     strategies: dict[str, pd.DataFrame],
+    pre_retirement_strategies: dict[str, pd.DataFrame],
+    annual_contribution: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
-    pre_rows = []
     post_rows = []
+    pre_retirement = summarize_pre_retirement_contribution_paths(
+        paths=paths,
+        asset_returns=asset_returns,
+        strategies=pre_retirement_strategies,
+        annual_contribution=annual_contribution,
+    )
 
     for approach, weight_path in strategies.items():
         terminal_balances = terminal_balances_by_starting_age_for_weight_path(
@@ -184,23 +287,6 @@ def evaluate_paths(
             asset_returns=asset_returns,
             age_weight_path=weight_path,
         )
-        for age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
-            balances = terminal_balances[age]
-            pre_rows.append(
-                {
-                    "approach": approach,
-                    "starting_age": age,
-                    "terminal_worst_1pct_mean": float(mean_of_worst_tail_fraction(balances, 0.01)),
-                    "terminal_worst_2pct_mean": float(mean_of_worst_tail_fraction(balances, 0.02)),
-                    "terminal_worst_4pct_mean": float(
-                        mean_of_worst_tail_fraction(balances, PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION)
-                    ),
-                    "terminal_worst_10pct_mean": float(mean_of_worst_tail_fraction(balances, 0.10)),
-                    "terminal_worst_50pct_mean": float(mean_of_worst_tail_fraction(balances, 0.50)),
-                    "terminal_mean": float(balances.mean()),
-                }
-            )
-
         post_rows.append(
             {
                 "approach": approach,
@@ -215,7 +301,7 @@ def evaluate_paths(
         )
 
     return (
-        pd.DataFrame(pre_rows),
+        pre_retirement,
         pd.DataFrame(post_rows),
     )
 
@@ -241,7 +327,7 @@ def plot_pre_retirement_worst_4pct(data: pd.DataFrame, output_dir: Path) -> None
     for ax in axes[-1]:
         ax.set_xlabel("Starting age")
     for ax in axes[:, 0]:
-        ax.set_ylabel("Terminal wealth ratio")
+        ax.set_ylabel("Terminal wealth / total contributions")
 
     handles, labels = axes_flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.01))
@@ -303,15 +389,12 @@ def main() -> None:
         shared_post_retirement_path=strategies["Ours"],
     )
 
-    pre_retirement, _ = evaluate_paths(
-        returns=returns,
-        paths=paths,
-        strategies=pre_retirement_strategies,
-    )
-    _, post_retirement = evaluate_paths(
+    pre_retirement, post_retirement = evaluate_paths(
         returns=returns,
         paths=paths,
         strategies=strategies,
+        pre_retirement_strategies=pre_retirement_strategies,
+        annual_contribution=args.annual_contribution,
     )
     write_outputs(
         pre_retirement=pre_retirement,
