@@ -173,12 +173,10 @@ def evaluate_paths(
     returns: pd.DataFrame,
     paths: np.ndarray,
     strategies: dict[str, pd.DataFrame],
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
-    asset_mean_returns = asset_returns.mean(axis=0)
     pre_rows = []
     post_rows = []
-    expected_return_rows = []
 
     for approach, weight_path in strategies.items():
         terminal_balances = terminal_balances_by_starting_age_for_weight_path(
@@ -216,21 +214,9 @@ def evaluate_paths(
             }
         )
 
-        weights = weight_path[WEIGHT_COLUMNS].to_numpy(dtype=float)
-        mean_returns = weights @ asset_mean_returns
-        expected_return_rows.extend(
-            {
-                "approach": approach,
-                "starting_age": int(age),
-                "mean_annual_portfolio_return": float(mean_return),
-            }
-            for age, mean_return in zip(weight_path["starting_age"], mean_returns)
-        )
-
     return (
         pd.DataFrame(pre_rows),
         pd.DataFrame(post_rows),
-        pd.DataFrame(expected_return_rows),
     )
 
 
@@ -264,46 +250,33 @@ def plot_pre_retirement_worst_4pct(data: pd.DataFrame, output_dir: Path) -> None
     print(f"Wrote {display_path(output_pdf)}")
 
 
-def plot_expected_returns(data: pd.DataFrame, output_dir: Path) -> None:
-    output_pdf = output_dir / "retirement_comparison_expected_returns.pdf"
-    fig, ax = plt.subplots(figsize=(10, 5.8), constrained_layout=True)
-    for approach, approach_data in data.groupby("approach", sort=False):
-        ax.plot(
-            approach_data["starting_age"],
-            approach_data["mean_annual_portfolio_return"] * 100,
-            color=APPROACH_COLORS.get(approach),
-            linewidth=2.2,
-            label=approach,
-        )
-    ax.set_title("Expected Portfolio Return Along Retirement Glide Paths", fontweight="bold")
-    ax.set_xlabel("Starting age")
-    ax.set_ylabel("Mean annual real portfolio return (%)")
-    ax.set_xlim(MIN_STARTING_AGE, MAX_STARTING_AGE)
-    ax.grid(alpha=0.2)
-    ax.legend(frameon=False)
-    fig.savefig(output_pdf)
-    plt.close(fig)
-    print(f"Wrote {display_path(output_pdf)}")
-
-
 def write_outputs(
     pre_retirement: pd.DataFrame,
     post_retirement: pd.DataFrame,
-    expected_returns: pd.DataFrame,
     output_dir: Path,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     pre_csv = output_dir / "retirement_comparison_pre_retirement_metrics.csv"
     post_csv = output_dir / "retirement_comparison_post_retirement_worst_2pct.csv"
-    expected_csv = output_dir / "retirement_comparison_expected_returns.csv"
     pre_retirement.to_csv(pre_csv, index=False)
     post_retirement.to_csv(post_csv, index=False)
-    expected_returns.to_csv(expected_csv, index=False)
     print(f"Wrote {display_path(pre_csv)}")
     print(f"Wrote {display_path(post_csv)}")
-    print(f"Wrote {display_path(expected_csv)}")
     plot_pre_retirement_worst_4pct(pre_retirement, output_dir)
-    plot_expected_returns(expected_returns, output_dir)
+
+
+def use_shared_post_retirement_block(
+    strategies: dict[str, pd.DataFrame],
+    shared_post_retirement_path: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    result = {}
+    shared_post = shared_post_retirement_path[
+        shared_post_retirement_path["starting_age"] >= FIRST_WITHDRAWAL_AGE
+    ][["starting_age", *WEIGHT_COLUMNS]]
+    for approach, path in strategies.items():
+        pre = path[path["starting_age"] <= RETIREMENT_AGE][["starting_age", *WEIGHT_COLUMNS]]
+        result[approach] = pd.concat([pre, shared_post], ignore_index=True)
+    return result
 
 
 def main() -> None:
@@ -325,8 +298,17 @@ def main() -> None:
         "Vanguard": load_external_path(SCRIPT_DIR / "vanguard_glide_path.csv"),
         "Fidelity": load_external_path(SCRIPT_DIR / "fidelity_glide_path.csv"),
     }
+    pre_retirement_strategies = use_shared_post_retirement_block(
+        strategies=strategies,
+        shared_post_retirement_path=strategies["Ours"],
+    )
 
-    pre_retirement, post_retirement, expected_returns = evaluate_paths(
+    pre_retirement, _ = evaluate_paths(
+        returns=returns,
+        paths=paths,
+        strategies=pre_retirement_strategies,
+    )
+    _, post_retirement = evaluate_paths(
         returns=returns,
         paths=paths,
         strategies=strategies,
@@ -334,7 +316,6 @@ def main() -> None:
     write_outputs(
         pre_retirement=pre_retirement,
         post_retirement=post_retirement,
-        expected_returns=expected_returns,
         output_dir=args.output_dir,
     )
 
