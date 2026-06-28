@@ -90,8 +90,8 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help=(
-            "Constant real contribution made at the beginning of each pre-retirement "
-            "year. Pre-retirement results are normalized by total contributed dollars."
+            "Fallback real contribution used only if the retirement path does not "
+            "contain per-age contribution constants."
         ),
     )
     parser.add_argument(
@@ -114,7 +114,7 @@ def get_retirement_input_dir(dataset: str) -> Path:
     return get_dataset_variant(dataset).data_dir / "retirement"
 
 
-def load_retirement_path(input_dir: Path) -> pd.DataFrame:
+def load_retirement_result(input_dir: Path) -> pd.DataFrame:
     parquet_path = input_dir / "retirement_path.parquet"
     csv_path = input_dir / "retirement_path.csv"
     if parquet_path.exists():
@@ -125,7 +125,7 @@ def load_retirement_path(input_dir: Path) -> pd.DataFrame:
         raise FileNotFoundError(
             f"Missing {parquet_path} or {csv_path}. Run simulate_retirement.py first."
         )
-    return normalize_age_weight_path(path, "starting_age")
+    return path
 
 
 def load_external_path(csv_path: Path) -> pd.DataFrame:
@@ -198,11 +198,44 @@ def post_retirement_balance_ratios(
     return balances
 
 
-def terminal_balances_with_contributions(
+def contribution_schedule_from_retirement_path(
+    retirement_path: pd.DataFrame,
+    fallback_annual_contribution: float,
+) -> dict[int, float]:
+    if fallback_annual_contribution <= 0:
+        raise ValueError("annual_contribution must be positive.")
+
+    if "annual_contribution" not in retirement_path.columns:
+        return {
+            age: fallback_annual_contribution
+            for age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1)
+        }
+
+    pre_retirement = retirement_path[
+        retirement_path["starting_age"].between(MIN_STARTING_AGE, RETIREMENT_AGE)
+    ][["starting_age", "annual_contribution"]].copy()
+    pre_retirement["starting_age"] = pre_retirement["starting_age"].astype(int)
+    pre_retirement = pre_retirement.sort_values("starting_age")
+
+    expected_ages = list(range(MIN_STARTING_AGE, RETIREMENT_AGE + 1))
+    if pre_retirement["starting_age"].tolist() != expected_ages:
+        raise ValueError(
+            "Retirement path must contain pre-retirement annual_contribution rows "
+            f"for ages {MIN_STARTING_AGE} through {RETIREMENT_AGE}."
+        )
+
+    contributions = pre_retirement["annual_contribution"].to_numpy(dtype=float)
+    if not np.isfinite(contributions).all() or (contributions <= 0).any():
+        raise ValueError("Pre-retirement annual_contribution values must be finite and positive.")
+
+    return dict(zip(expected_ages, contributions, strict=True))
+
+
+def lifecycle_terminal_balances_with_contributions(
     paths: np.ndarray,
     asset_returns: np.ndarray,
     age_weight_path: pd.DataFrame,
-    annual_contribution: float,
+    contribution_by_age: dict[int, float],
 ) -> dict[int, np.ndarray]:
     weights_by_age = {
         int(row["starting_age"]): row[WEIGHT_COLUMNS].to_numpy(dtype=float)
@@ -213,15 +246,27 @@ def terminal_balances_with_contributions(
         asset_returns=asset_returns,
         age_weight_path=age_weight_path,
     )
+
+    entering_balances_by_age = {}
+    balance = np.zeros(paths.shape[0], dtype=float)
+    for age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
+        entering_balances_by_age[age] = balance.copy()
+        balance += contribution_by_age[age]
+        year_returns = asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
+        balance *= 1 + year_returns
+
     result = {}
     for start_age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
-        balances = np.zeros(paths.shape[0], dtype=float)
+        balances = entering_balances_by_age[start_age].copy()
         for age in range(start_age, RETIREMENT_AGE + 1):
-            balances += annual_contribution
+            balances += contribution_by_age[age]
             year_returns = asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
             balances *= 1 + year_returns
-        total_contributed = annual_contribution * (RETIREMENT_AGE - start_age + 1)
-        result[start_age] = balances * post_ratios / total_contributed
+        remaining_contributions = sum(
+            contribution_by_age[age] for age in range(start_age, RETIREMENT_AGE + 1)
+        )
+        total_invested = entering_balances_by_age[start_age] + remaining_contributions
+        result[start_age] = balances * post_ratios / total_invested
     return result
 
 
@@ -229,18 +274,15 @@ def summarize_pre_retirement_contribution_paths(
     paths: np.ndarray,
     asset_returns: np.ndarray,
     strategies: dict[str, pd.DataFrame],
-    annual_contribution: float,
+    contribution_by_age: dict[int, float],
 ) -> pd.DataFrame:
-    if annual_contribution <= 0:
-        raise ValueError("annual_contribution must be positive.")
-
     rows = []
     for approach, weight_path in strategies.items():
-        terminal_balances = terminal_balances_with_contributions(
+        terminal_balances = lifecycle_terminal_balances_with_contributions(
             paths=paths,
             asset_returns=asset_returns,
             age_weight_path=weight_path,
-            annual_contribution=annual_contribution,
+            contribution_by_age=contribution_by_age,
         )
         for age in range(MIN_STARTING_AGE, RETIREMENT_AGE + 1):
             balances = terminal_balances[age]
@@ -259,8 +301,15 @@ def summarize_pre_retirement_contribution_paths(
                     "terminal_worst_10pct_mean": float(mean_of_worst_tail_fraction(balances, 0.10)),
                     "terminal_worst_50pct_mean": float(mean_of_worst_tail_fraction(balances, 0.50)),
                     "terminal_mean": float(balances.mean()),
-                    "annual_contribution": annual_contribution,
-                    "normalization": "terminal wealth divided by total real pre-retirement contributions",
+                    "annual_contribution": contribution_by_age[age],
+                    "remaining_contributions": sum(
+                        contribution_by_age[future_age]
+                        for future_age in range(age, RETIREMENT_AGE + 1)
+                    ),
+                    "normalization": (
+                        "terminal wealth divided by entering balance plus remaining "
+                        "real pre-retirement contributions"
+                    ),
                 }
             )
     return pd.DataFrame(rows)
@@ -271,7 +320,7 @@ def evaluate_paths(
     paths: np.ndarray,
     strategies: dict[str, pd.DataFrame],
     pre_retirement_strategies: dict[str, pd.DataFrame],
-    annual_contribution: float,
+    contribution_by_age: dict[int, float],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
     post_rows = []
@@ -279,7 +328,7 @@ def evaluate_paths(
         paths=paths,
         asset_returns=asset_returns,
         strategies=pre_retirement_strategies,
-        annual_contribution=annual_contribution,
+        contribution_by_age=contribution_by_age,
     )
 
     for approach, weight_path in strategies.items():
@@ -341,7 +390,7 @@ def plot_pre_retirement_worst_4pct(data: pd.DataFrame, output_dir: Path) -> None
     for ax in axes[-1]:
         ax.set_xlabel("Starting age")
     for ax in axes[:, 0]:
-        ax.set_ylabel("Terminal wealth / total contributions")
+        ax.set_ylabel("Terminal wealth / invested amount")
 
     handles, labels = axes_flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.01))
@@ -421,8 +470,13 @@ def main() -> None:
         seed=args.seed,
         num_years=len(returns),
     )
+    retirement_result = load_retirement_result(retirement_input_dir)
+    contribution_by_age = contribution_schedule_from_retirement_path(
+        retirement_path=retirement_result,
+        fallback_annual_contribution=args.annual_contribution,
+    )
     strategies = {
-        "Ours": load_retirement_path(retirement_input_dir),
+        "Ours": normalize_age_weight_path(retirement_result, "starting_age"),
         "Vanguard": load_external_path(SCRIPT_DIR / "vanguard_glide_path.csv"),
         "Fidelity": load_external_path(SCRIPT_DIR / "fidelity_glide_path.csv"),
     }
@@ -436,7 +490,7 @@ def main() -> None:
         paths=paths,
         strategies=strategies,
         pre_retirement_strategies=pre_retirement_strategies,
-        annual_contribution=args.annual_contribution,
+        contribution_by_age=contribution_by_age,
     )
     write_outputs(
         pre_retirement=pre_retirement,
