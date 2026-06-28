@@ -34,12 +34,15 @@ Canonical output layout:
 
 The project still aims to recommend how someone should invest given how much time they have left, using only broad asset classes and preferring simple conclusions.
 
-There are now two distinct arms of the project:
+There are now three distinct arms of the project:
 
 - The fixed-portfolio arm: older, more established, and currently the main baseline.
 - The glide path arm: newer and explicitly experimental.
+- The retirement arm: newest and explicitly experimental, combining accumulation, retirement withdrawals, and external glide-path comparisons.
 
 The glide path work should not be described as settled, final, or clearly superior. It exists because the user wants to test whether a time-varying recommendation can answer the original question more directly than the fixed-portfolio workflow.
+
+The retirement arm has a known conceptual issue around how annual contributions are represented. Read `current_retirement_issue.md` before interpreting retirement results or modifying that code.
 
 ## Shared Modeling Choices
 
@@ -147,6 +150,50 @@ Current glide path outputs include:
 ## Convergence Diagnostics
 
 `q02_diff_density.py` is no longer just about `q02`. It was extended to support the glide path arm and the newer downside metric as well. Recent work used it with no smoothing or regularization to compare checkpoint runs against the larger reference run.
+
+## Retirement Arm
+
+The retirement arm was added as a new branch of the project after the fixed-portfolio and glide-path arms. It assumes retirement at age 65, withdrawals beginning at age 66, and terminal evaluation at age 90. Withdrawals are fixed in real terms, with the first withdrawal equal to 3.5% of the age-65 balance.
+
+Core scripts:
+
+- `simulate_retirement.py`
+- `plot_retirement_glide_path.py`
+- `plot_retirement_withdrawal_sweep.py`
+- `external_comparisons/compare_retirement_glide_paths.py`
+- `external_comparisons/plot_external_glide_paths.py`
+
+Current canonical output locations:
+
+- `data/<dataset>/retirement/`
+- `plots/<dataset>/retirement/`
+- `external_comparisons/`
+
+External comparison glide paths were approximated from user descriptions:
+
+- Vanguard: 90% stocks / 10% bonds through age 40; linear to 60% stocks / 40% bonds by age 60; then linear to 32% stocks / 52% bonds / 16% T-bills by age 72; held constant through age 90.
+- Fidelity: 95% stocks / 5% T-bills through age 35; linear to 90% stocks / 5% bonds / 5% T-bills by age 45; linear to 30% stocks / 50% bonds / 20% T-bills by age 80; held constant through age 90.
+
+Major retirement-arm choices and experiments so far:
+
+- Initial post-retirement logic evaluated fixed portfolios with the same block bootstrap machinery as the rest of the project.
+- The post-retirement objective was changed to maximize the mean terminal wealth ratio among the worst 2% of paths, with no hard 50% floor constraint.
+- Withdrawal rate was changed to 3.5% real after experiments at 3% and 4%.
+- A withdrawal-rate sweep script was added because an early line plot looked suspiciously linear. The dotted 0.5 reference line was removed.
+- Pre-retirement logic borrowed the greedy glide-path machinery, including same-distance/same-direction projection lookahead and diagnostic plots.
+- Candidate search was sped up by limiting pre-retirement candidates to portfolios within `0.1` Euclidean simplex-coordinate distance of the next older selected portfolio.
+- Projection lookahead was made configurable with `--projection-steps`; the retirement default was set to 4.
+- Pre-retirement objective has been tried with worst 4% and worst 2% tails. The post-retirement objective remains worst 2%.
+- Annual contribution modeling was added to both the retirement simulation and external comparison script, normalizing pre-retirement terminal wealth by total real contributions.
+- A one-off option `--pre-retirement-target age65` was added to `simulate_retirement.py` to optimize accumulated age-65 wealth over contributions rather than age-90 terminal wealth after the post-retirement block. A one-off run wrote to `data/from_1927/retirement_age65_objective/`.
+
+Important finding from the annual-contribution work:
+
+The current contribution implementation is scale-free because every pre-retirement dollar in the objective comes from the same `annual_contribution` term. Changing `annual_contribution` from `1.0` to `0.01` does not change the optimum because both simulated balances and the denominator scale by the same constant. This is only appropriate for a start-from-zero-at-each-starting-age interpretation.
+
+The user identified a major conceptual flaw: for age-specific pre-retirement optimization and comparison plots, the current logic treats each starting age as a fresh account beginning at zero, then adds contributions from that starting age through age 65. That means, for example, the age-60 optimization/plot point ignores the large account balance that would normally have accumulated from contributions made at ages 20-59. Near retirement, this makes new annual contributions unrealistically large relative to modeled account wealth. This affects both `simulate_retirement.py` and the pre-retirement plotted quantities in `external_comparisons/compare_retirement_glide_paths.py`.
+
+See `current_retirement_issue.md` for the focused issue description and likely directions for repair.
 
 ## Interpretation Notes
 

@@ -8,12 +8,15 @@ This repo is a Python/uv project for studying portfolio returns across three bro
 
 The project vision has not changed: produce a data-driven recommendation for how someone should invest given how much time they have left, using simple asset classes and aiming for simple takeaways.
 
-The repo currently has two components:
+The repo currently has three components:
 
 - A fixed-portfolio approach, where one portfolio is held for the full horizon and optimized across horizons.
 - A glide path approach, where the recommended portfolio may change as the horizon changes.
+- A retirement approach, where the project studies accumulation through age 65, withdrawals from age 66 through age 90, and comparisons against external target-date-style glide paths.
 
 The glide path work is still experimental. Do not describe it as final or clearly superior. It is a serious line of work, but the user is still testing whether it leads to better recommendations or simply more complexity.
+
+The retirement work is also experimental and currently has a known conceptual issue around contribution handling. Before modifying or interpreting the retirement arm, read `current_retirement_issue.md`.
 
 ## Core Data
 
@@ -99,6 +102,37 @@ Important context:
 - That objective is currently considered an improvement over `q02` for this work because it produces smoother surfaces and is less sensitive to tiny cutoff noise.
 - Horizon 1 is anchored using the exact empirical mean of the worst 4% of observed one-year outcomes. In the 99-year `from_1927` sample, that means the worst 4 years.
 - The current main glide path script uses a projected one-step continuation idea when scoring candidates. The separate `simulate_glide_path_lookahead.py` script preserves a more expensive local lookahead variant for comparison.
+
+## Retirement Component
+
+This is the newest experimental component. It adapts ideas from both the fixed-portfolio and glide-path arms to model a retirement lifecycle:
+
+- starting ages run from 20 through 90
+- retirement is assumed at age 65
+- withdrawals begin at the start of age 66
+- withdrawals are fixed in real terms after an initial withdrawal equal to 3.5% of the age-65 balance
+
+Primary scripts:
+
+- `simulate_retirement.py`
+- `plot_retirement_glide_path.py`
+- `plot_retirement_withdrawal_sweep.py`
+- `external_comparisons/compare_retirement_glide_paths.py`
+
+Primary outputs:
+
+- `data/<dataset>/retirement/retirement_candidate_summary.parquet`
+- `data/<dataset>/retirement/retirement_path.parquet`
+- `data/<dataset>/retirement/retirement_metadata.csv`
+- `plots/<dataset>/retirement/`
+
+External comparison inputs live in `external_comparisons/` and include approximate Vanguard and Fidelity glide paths over the same three asset classes.
+
+Important context:
+
+- The post-retirement block currently chooses a fixed portfolio by maximizing the mean terminal wealth ratio among the worst 2% of paths.
+- The pre-retirement greedy path has experimented with worst 4% and worst 2% objectives, same-direction/same-distance projection lookahead, neighborhood-limited candidate search, and annual contribution modeling.
+- The current annual contribution implementation has a known flaw: each plotted/optimized starting age is treated as starting fresh from zero rather than carrying forward wealth accumulated from earlier contributions. This especially distorts near-retirement logic. See `current_retirement_issue.md`.
 
 ## Important Scripts
 
