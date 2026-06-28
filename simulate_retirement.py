@@ -36,6 +36,7 @@ FIRST_WITHDRAWAL_AGE = 66
 WITHDRAWAL_RATE = 0.035
 POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.02
 PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.04
+PRE_RETIREMENT_SELECTION_TAIL_FRACTION = 0.02
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
@@ -231,9 +232,14 @@ def add_pre_retirement_selection_scores(
         (result["simplex_x"] - next_older_selected["simplex_x"]) ** 2
         + (result["simplex_y"] - next_older_selected["simplex_y"]) ** 2
     )
-    result["projected_terminal_worst_4pct_mean_zscore"] = zscore_values(
-        result["projected_terminal_worst_4pct_mean"]
-    )
+    if PRE_RETIREMENT_SELECTION_TAIL_FRACTION == 0.02:
+        selection_column = "projected_terminal_worst_2pct_mean"
+    elif PRE_RETIREMENT_SELECTION_TAIL_FRACTION == 0.04:
+        selection_column = "projected_terminal_worst_4pct_mean"
+    else:
+        raise ValueError("Unsupported pre-retirement selection tail fraction.")
+
+    result["projected_terminal_selection_mean_zscore"] = zscore_values(result[selection_column])
 
     reference_direction = get_reference_direction(path_rows_descending_age)
     if reference_direction is None:
@@ -253,7 +259,7 @@ def add_pre_retirement_selection_scores(
         )
 
     result["greedy_score"] = (
-        result["projected_terminal_worst_4pct_mean_zscore"]
+        result["projected_terminal_selection_mean_zscore"]
         - path_distance_lambda * result["next_older_simplex_step_distance"]
         + path_direction_lambda * result["prior_direction_cosine_similarity"]
     )
@@ -569,18 +575,17 @@ def summarize_pre_retirement_age(
         [
             "greedy_score",
             "prior_direction_cosine_similarity",
-            "projected_terminal_worst_4pct_mean_zscore",
-            "projected_terminal_worst_4pct_mean",
-            "terminal_worst_4pct_mean",
             "projected_terminal_worst_2pct_mean",
             "terminal_worst_2pct_mean",
+            "projected_terminal_worst_4pct_mean",
+            "terminal_worst_4pct_mean",
             "terminal_q02",
             "terminal_mean",
             "stock_weight",
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, False, False, False, False, False, False, True, True, True],
+        ascending=[False, False, False, False, False, False, False, False, True, True, True],
     ).iloc[0]
     age_summary["is_selected"] = False
     age_summary.loc[selected.name, "is_selected"] = True
@@ -733,7 +738,7 @@ def run_pre_retirement_greedy(
             f"bonds={selected['bond_weight']:.2f}, "
             f"t-bills={selected['t_bill_weight']:.2f}, "
             f"contribution={selected['annual_contribution']:.4f}, "
-            f"projected_terminal_worst_4pct={selected['projected_terminal_worst_4pct_mean']:.3f}",
+            f"projected_terminal_worst_2pct={selected['projected_terminal_worst_2pct_mean']:.3f}",
             flush=True,
         )
 
@@ -864,7 +869,7 @@ def build_retirement_path(
     post_path_template["greedy_score"] = np.nan
     post_path_template["projection_steps"] = projection_steps
     post_path_template["effective_projection_steps"] = np.nan
-    post_path_template["projected_terminal_worst_4pct_mean_zscore"] = np.nan
+    post_path_template["projected_terminal_selection_mean_zscore"] = np.nan
     post_path_template["is_selected"] = True
     for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
         row = post_path_template.copy()
@@ -1039,7 +1044,7 @@ def write_metadata(
             (
                 "pre_retirement_objective",
                 (
-                    "maximize mean age-90 terminal balance over worst 4% of paths, "
+                    "maximize mean age-90 terminal balance over worst 2% of paths, "
                     "normalized by starting balance plus total real pre-retirement contributions"
                 ),
             ),
