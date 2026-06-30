@@ -36,7 +36,7 @@ FIRST_WITHDRAWAL_AGE = 66
 WITHDRAWAL_RATE = 0.035
 POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.02
 PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION = 0.04
-PRE_RETIREMENT_SELECTION_TAIL_FRACTION = 0.02
+PRE_RETIREMENT_SELECTION_TAIL_FRACTION = 0.04
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
@@ -182,6 +182,57 @@ def summarize_candidates(
     for column, values in stats.items():
         result[column] = values
     return result
+
+
+def constant_growth_ratio_from_terminal_value(
+    terminal_values: np.ndarray,
+    starting_balance: float,
+    annual_contribution: float,
+    num_years: int,
+) -> np.ndarray:
+    if num_years < 1:
+        raise ValueError("num_years must be positive.")
+    if starting_balance < 0:
+        raise ValueError("starting_balance must be non-negative.")
+    if annual_contribution < 0:
+        raise ValueError("annual_contribution must be non-negative.")
+    if starting_balance == 0 and annual_contribution == 0:
+        raise ValueError("starting_balance and annual_contribution cannot both be zero.")
+
+    terminal_values = np.asarray(terminal_values, dtype=float)
+    if annual_contribution == 0:
+        if starting_balance <= 0:
+            raise ValueError("starting_balance must be positive when annual_contribution is zero.")
+        return terminal_values / starting_balance
+
+    if starting_balance == 0 and num_years == 1:
+        return terminal_values / annual_contribution
+
+    target = np.maximum(terminal_values, 0.0)
+    low = np.zeros_like(target, dtype=float)
+    high = np.full_like(target, 2.0, dtype=float)
+
+    def future_value(growth_factor: np.ndarray) -> np.ndarray:
+        growth_power = growth_factor**num_years
+        near_one = np.isclose(growth_factor, 1.0)
+        contribution_growth = np.full_like(growth_factor, float(num_years), dtype=float)
+        np.divide(
+            growth_factor * (growth_power - 1),
+            growth_factor - 1,
+            out=contribution_growth,
+            where=~near_one,
+        )
+        return starting_balance * growth_power + annual_contribution * contribution_growth
+
+    while np.any(future_value(high) < target):
+        high *= 2
+
+    for _ in range(64):
+        mid = (low + high) / 2
+        high = np.where(future_value(mid) >= target, mid, high)
+        low = np.where(future_value(mid) >= target, low, mid)
+
+    return high**num_years
 
 
 def zscore_values(values: pd.Series) -> pd.Series:
@@ -395,10 +446,14 @@ def pre_retirement_terminal_balances(
             selected_indexes = np.array([selected_weight_indexes_by_age[age]], dtype=np.int32)
         balances *= 1 + annual_returns[paths[:, age_path_offset(age)]][:, selected_indexes]
 
-    total_invested = starting_balance + annual_contribution * (RETIREMENT_AGE - start_age + 1)
-    if total_invested <= 0:
-        raise ValueError("pre-retirement invested amount must be positive.")
-    return balances * post_retirement_balance_ratios[:, None] / total_invested
+    num_years = RETIREMENT_AGE - start_age + 1
+    pre_retirement_growth_ratio = constant_growth_ratio_from_terminal_value(
+        terminal_values=balances,
+        starting_balance=starting_balance,
+        annual_contribution=annual_contribution,
+        num_years=num_years,
+    )
+    return pre_retirement_growth_ratio * post_retirement_balance_ratios[:, None]
 
 
 def projected_pre_retirement_terminal_balances(
@@ -425,12 +480,14 @@ def projected_pre_retirement_terminal_balances(
             selected_indexes = np.array([selected_weight_indexes_by_age[age]], dtype=np.int32)
         balances *= 1 + annual_returns[paths[:, age_path_offset(age)]][:, selected_indexes]
 
-    total_invested = starting_balance + annual_contribution * (
-        RETIREMENT_AGE - projected_start_age + 1
+    num_years = RETIREMENT_AGE - projected_start_age + 1
+    pre_retirement_growth_ratio = constant_growth_ratio_from_terminal_value(
+        terminal_values=balances,
+        starting_balance=starting_balance,
+        annual_contribution=annual_contribution,
+        num_years=num_years,
     )
-    if total_invested <= 0:
-        raise ValueError("projected pre-retirement invested amount must be positive.")
-    return balances * post_retirement_balance_ratios[:, None] / total_invested
+    return pre_retirement_growth_ratio * post_retirement_balance_ratios[:, None]
 
 
 def projected_weight_indexes_for_steps(
@@ -575,10 +632,10 @@ def summarize_pre_retirement_age(
         [
             "greedy_score",
             "prior_direction_cosine_similarity",
-            "projected_terminal_worst_2pct_mean",
-            "terminal_worst_2pct_mean",
             "projected_terminal_worst_4pct_mean",
             "terminal_worst_4pct_mean",
+            "projected_terminal_worst_2pct_mean",
+            "terminal_worst_2pct_mean",
             "terminal_q02",
             "terminal_mean",
             "stock_weight",
@@ -738,7 +795,7 @@ def run_pre_retirement_greedy(
             f"bonds={selected['bond_weight']:.2f}, "
             f"t-bills={selected['t_bill_weight']:.2f}, "
             f"contribution={selected['annual_contribution']:.4f}, "
-            f"projected_terminal_worst_2pct={selected['projected_terminal_worst_2pct_mean']:.3f}",
+            f"projected_terminal_worst_4pct={selected['projected_terminal_worst_4pct_mean']:.3f}",
             flush=True,
         )
 
@@ -1044,8 +1101,9 @@ def write_metadata(
             (
                 "pre_retirement_objective",
                 (
-                    "maximize mean age-90 terminal balance over worst 2% of paths, "
-                    "normalized by starting balance plus total real pre-retirement contributions"
+                    "maximize the mean of the worst 4% of path metrics, where each "
+                    "metric is XIRR-to-65 converted to a pre-retirement growth ratio "
+                    "and multiplied by the post-retirement terminal wealth ratio"
                 ),
             ),
             (
