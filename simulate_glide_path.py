@@ -23,8 +23,10 @@ BLOCK_LENGTH = 10
 NUM_SIMULATIONS = 20_000
 DEFAULT_SEED = 20260616
 DEFAULT_PORTFOLIO_CHUNK_SIZE = 500
-DEFAULT_PATH_DISTANCE_LAMBDA = 2.0
+DEFAULT_PATH_DISTANCE_LAMBDA = 0.0
 DEFAULT_PATH_DIRECTION_LAMBDA = 0.0
+DEFAULT_CANDIDATE_RADIUS = 0.10
+DEFAULT_PROJECTION_STEPS = 4
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 WORST_TAIL_FRACTION = 0.04
 CHECKPOINT_LEVELS = (10_000, 20_000, 30_000, 40_000)
@@ -92,11 +94,40 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--candidate-radius",
+        type=float,
+        default=DEFAULT_CANDIDATE_RADIUS,
+        help=(
+            "Euclidean simplex-coordinate radius around the previously selected "
+            "shorter-horizon portfolio for candidate portfolios. Horizon 1 still "
+            "evaluates the full simplex."
+        ),
+    )
+    parser.add_argument(
+        "--projection-steps",
+        type=int,
+        default=DEFAULT_PROJECTION_STEPS,
+        help=(
+            "Number of same-distance, same-direction longer-horizon projection steps "
+            "used when scoring candidates. Horizon 1 uses no projection."
+        ),
+    )
+    parser.add_argument(
         "--no-portfolio-smoothing",
         action="store_true",
+        default=True,
         help=(
-            "Select from raw worst-4%-mean values instead of portfolio-smoothed "
-            "worst-4%-mean values."
+            "Select from raw worst-4%-mean values instead of portfolio-smoothed values. "
+            "This is the default."
+        ),
+    )
+    parser.add_argument(
+        "--portfolio-smoothing",
+        dest="no_portfolio_smoothing",
+        action="store_false",
+        help=(
+            "Use portfolio-smoothed q02 and worst-4%-mean columns for reporting. "
+            "Selection still uses projected_worst_4pct_mean."
         ),
     )
     parser.add_argument(
@@ -164,6 +195,42 @@ def nearest_portfolio_indexes(
     return nearest_indexes
 
 
+def build_neighbor_indexes(coords: pd.DataFrame, radius: float) -> list[np.ndarray]:
+    if radius <= 0:
+        raise ValueError("candidate_radius must be positive.")
+
+    coord_matrix = coords[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
+    distances = np.sqrt(
+        (coord_matrix[:, None, 0] - coord_matrix[None, :, 0]) ** 2
+        + (coord_matrix[:, None, 1] - coord_matrix[None, :, 1]) ** 2
+    )
+    return [np.flatnonzero(row <= radius) for row in distances]
+
+
+def projected_weight_indexes_for_steps(
+    previous_weights: np.ndarray,
+    candidate_weights: np.ndarray,
+    weight_matrix: np.ndarray,
+    projection_steps: int,
+    portfolio_chunk_size: int,
+) -> list[np.ndarray]:
+    if projection_steps < 0:
+        raise ValueError("projection_steps must be non-negative.")
+
+    direction = candidate_weights - previous_weights
+    result = []
+    for step in range(1, projection_steps + 1):
+        projected_weights = project_rows_to_simplex(candidate_weights + step * direction)
+        result.append(
+            nearest_portfolio_indexes(
+                projected_weights=projected_weights,
+                weight_matrix=weight_matrix,
+                portfolio_chunk_size=portfolio_chunk_size,
+            )
+        )
+    return result
+
+
 def summarize_annualized_returns(annualized_returns: np.ndarray) -> dict[str, np.ndarray]:
     q01, q02, q10, median = lower_quantiles_in_place(annualized_returns.copy())
     return {
@@ -205,6 +272,24 @@ def make_portfolio_smoothing_kernel(
         + (coordinate_matrix[:, None, 1] - coordinate_matrix[None, :, 1]) ** 2
     )
     return coords, gaussian_row_stochastic_weights(distances, portfolio_bandwidth)
+
+
+def smooth_metric_for_candidates(
+    horizon_summary: pd.DataFrame,
+    metric: str,
+    portfolio_bandwidth: float,
+    no_portfolio_smoothing: bool,
+) -> np.ndarray:
+    if no_portfolio_smoothing:
+        return horizon_summary[metric].to_numpy(dtype=float)
+
+    coords = horizon_summary[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
+    distances = np.sqrt(
+        (coords[:, None, 0] - coords[None, :, 0]) ** 2
+        + (coords[:, None, 1] - coords[None, :, 1]) ** 2
+    )
+    kernel = gaussian_row_stochastic_weights(distances, portfolio_bandwidth)
+    return kernel @ horizon_summary[metric].to_numpy(dtype=float)
 
 
 def zscore_values(values: pd.Series) -> pd.Series:
@@ -317,9 +402,12 @@ def exact_one_year_summary(
     asset_returns: np.ndarray,
     weights: pd.DataFrame,
     weight_matrix: np.ndarray,
+    candidate_indexes: np.ndarray,
 ) -> pd.DataFrame:
-    annual_returns = asset_returns @ weight_matrix.T
-    return summarize_candidates(weights, annual_returns)
+    annual_returns = asset_returns @ weight_matrix[candidate_indexes].T
+    return summarize_candidates(weights.iloc[candidate_indexes], annual_returns).assign(
+        selected_weight_index=candidate_indexes
+    )
 
 
 def summarize_glidepath_horizon(
@@ -328,6 +416,7 @@ def summarize_glidepath_horizon(
     asset_returns: np.ndarray,
     weights: pd.DataFrame,
     weight_matrix: np.ndarray,
+    candidate_indexes: np.ndarray,
     selected_weight_indexes: dict[int, int],
     portfolio_chunk_size: int,
     checkpoint_levels: tuple[int, ...],
@@ -343,15 +432,23 @@ def summarize_glidepath_horizon(
     checkpoint_chunks: dict[int, list[pd.DataFrame]] = {
         checkpoint: [] for checkpoint in checkpoint_levels
     }
-    for start in range(0, len(weights), portfolio_chunk_size):
-        stop = min(start + portfolio_chunk_size, len(weights))
-        first_year_returns = asset_returns[paths[:, 0]] @ weight_matrix[start:stop].T
+    for start in range(0, len(candidate_indexes), portfolio_chunk_size):
+        stop = min(start + portfolio_chunk_size, len(candidate_indexes))
+        chunk_indexes = candidate_indexes[start:stop]
+        first_year_returns = asset_returns[paths[:, 0]] @ weight_matrix[chunk_indexes].T
         terminal_log_growth = np.log1p(first_year_returns) + suffix_log_growth[:, None]
         annualized_returns = np.exp(terminal_log_growth / horizon) - 1
-        chunks.append(summarize_candidates(weights.iloc[start:stop], annualized_returns))
+        chunks.append(
+            summarize_candidates(weights.iloc[chunk_indexes], annualized_returns).assign(
+                selected_weight_index=chunk_indexes
+            )
+        )
         for checkpoint in checkpoint_levels:
             checkpoint_chunks[checkpoint].append(
-                summarize_candidates(weights.iloc[start:stop], annualized_returns[:checkpoint])
+                summarize_candidates(
+                    weights.iloc[chunk_indexes],
+                    annualized_returns[:checkpoint],
+                ).assign(selected_weight_index=chunk_indexes)
             )
 
     checkpoint_summaries = {
@@ -366,12 +463,16 @@ def summarize_projected_continuation(
     paths: np.ndarray,
     asset_returns: np.ndarray,
     weight_matrix: np.ndarray,
+    candidate_indexes: np.ndarray,
     selected_weight_indexes: dict[int, int],
     previous_selected: pd.Series | None,
     portfolio_chunk_size: int,
+    projection_steps: int,
 ) -> pd.DataFrame:
     if horizon == 1 or previous_selected is None:
         raise ValueError("Projected continuation requires a previous selected portfolio.")
+    if projection_steps < 0:
+        raise ValueError("projection_steps must be non-negative.")
 
     previous_weights = np.array(
         [
@@ -381,42 +482,52 @@ def summarize_projected_continuation(
         ],
         dtype=float,
     )
-    proposed_continuation_weights = project_rows_to_simplex(
-        weight_matrix + (weight_matrix - previous_weights)
-    )
-    projected_weight_indexes = nearest_portfolio_indexes(
-        projected_weights=proposed_continuation_weights,
+    projected_weight_indexes_by_step = projected_weight_indexes_for_steps(
+        previous_weights=previous_weights,
+        candidate_weights=weight_matrix[candidate_indexes],
         weight_matrix=weight_matrix,
+        projection_steps=projection_steps,
         portfolio_chunk_size=portfolio_chunk_size,
     )
 
     suffix_log_growth = np.zeros(paths.shape[0], dtype=float)
-    for year_offset in range(2, horizon + 1):
-        years_remaining_after_offset = horizon + 1 - year_offset
+    projected_horizon = horizon + projection_steps
+    for year_offset in range(projection_steps + 1, projected_horizon):
+        years_remaining_after_offset = projected_horizon - year_offset
         selected_index = selected_weight_indexes[years_remaining_after_offset]
         selected_returns = asset_returns[paths[:, year_offset]] @ weight_matrix[selected_index]
         suffix_log_growth += np.log1p(selected_returns)
 
     chunks = []
-    for start in range(0, len(weight_matrix), portfolio_chunk_size):
-        stop = min(start + portfolio_chunk_size, len(weight_matrix))
-        candidate_returns = asset_returns[paths[:, 1]] @ weight_matrix[start:stop].T
-        projected_returns = (
-            asset_returns[paths[:, 0]] @ weight_matrix[projected_weight_indexes[start:stop]].T
-        )
-        terminal_log_growth = (
-            np.log1p(projected_returns)
-            + np.log1p(candidate_returns)
-            + suffix_log_growth[:, None]
-        )
-        annualized_returns = np.exp(terminal_log_growth / (horizon + 1)) - 1
+    for start in range(0, len(candidate_indexes), portfolio_chunk_size):
+        stop = min(start + portfolio_chunk_size, len(candidate_indexes))
+        chunk_indexes = candidate_indexes[start:stop]
+        candidate_returns = asset_returns[paths[:, projection_steps]] @ weight_matrix[
+            chunk_indexes
+        ].T
+        terminal_log_growth = np.log1p(candidate_returns) + suffix_log_growth[:, None]
+
+        for projected_offset in range(projection_steps):
+            step_indexes = projected_weight_indexes_by_step[
+                projection_steps - projected_offset - 1
+            ][start:stop]
+            projected_returns = asset_returns[paths[:, projected_offset]] @ weight_matrix[
+                step_indexes
+            ].T
+            terminal_log_growth += np.log1p(projected_returns)
+
+        annualized_returns = np.exp(terminal_log_growth / projected_horizon) - 1
         stats = summarize_annualized_returns(annualized_returns)
+        if projection_steps == 0:
+            chunk_projected_weight_indexes = chunk_indexes
+        else:
+            chunk_projected_weight_indexes = projected_weight_indexes_by_step[-1][start:stop]
         chunk = pd.DataFrame(
             {
-                "projected_weight_index": projected_weight_indexes[start:stop],
-                "projected_stock_weight": weight_matrix[projected_weight_indexes[start:stop], 0],
-                "projected_bond_weight": weight_matrix[projected_weight_indexes[start:stop], 1],
-                "projected_t_bill_weight": weight_matrix[projected_weight_indexes[start:stop], 2],
+                "projected_weight_index": chunk_projected_weight_indexes,
+                "projected_stock_weight": weight_matrix[chunk_projected_weight_indexes, 0],
+                "projected_bond_weight": weight_matrix[chunk_projected_weight_indexes, 1],
+                "projected_t_bill_weight": weight_matrix[chunk_projected_weight_indexes, 2],
             }
         )
         for column, values in stats.items():
@@ -437,6 +548,8 @@ def build_greedy_glide_path(
     portfolio_bandwidth: float,
     path_distance_lambda: float,
     path_direction_lambda: float,
+    candidate_radius: float,
+    projection_steps: int,
     no_portfolio_smoothing: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
@@ -453,14 +566,15 @@ def build_greedy_glide_path(
         raise ValueError("path_distance_lambda must be non-negative.")
     if path_direction_lambda < 0:
         raise ValueError("path_direction_lambda must be non-negative.")
+    if candidate_radius <= 0:
+        raise ValueError("candidate_radius must be positive.")
+    if projection_steps < 0:
+        raise ValueError("projection_steps must be non-negative.")
 
     asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
     weight_matrix = weights.to_numpy(dtype=float)
-    coords, portfolio_kernel = make_portfolio_smoothing_kernel(
-        weights,
-        portfolio_bandwidth,
-        no_portfolio_smoothing,
-    )
+    coords = add_simplex_coordinates(weights)
+    neighbor_indexes = build_neighbor_indexes(coords, candidate_radius)
 
     rng = make_rng(seed, dataset)
     initial_year_indexes = generate_balanced_initial_year_indexes(
@@ -468,7 +582,7 @@ def build_greedy_glide_path(
         num_simulations=num_simulations,
         rng=rng,
     )
-    resampled_horizon = max_horizon + 1 if max_horizon > 1 else max_horizon
+    resampled_horizon = max_horizon + projection_steps if max_horizon > 1 else max_horizon
     paths = generate_resampled_paths(
         num_years=len(returns),
         horizon=resampled_horizon,
@@ -486,8 +600,18 @@ def build_greedy_glide_path(
     checkpoint_levels = get_checkpoint_levels(num_simulations)
 
     for horizon in range(1, max_horizon + 1):
+        if previous_selected is None:
+            candidate_indexes = np.arange(len(weights), dtype=np.int32)
+        else:
+            candidate_indexes = neighbor_indexes[int(previous_selected["selected_weight_index"])]
+        effective_projection_steps = 0 if horizon == 1 else projection_steps
         if horizon == 1:
-            horizon_summary = exact_one_year_summary(asset_returns, weights, weight_matrix)
+            horizon_summary = exact_one_year_summary(
+                asset_returns,
+                weights,
+                weight_matrix,
+                candidate_indexes,
+            )
             horizon_checkpoint_summaries: dict[int, pd.DataFrame] = {}
             num_paths = len(returns)
             print("Horizon 1: exact empirical one-year anchor", flush=True)
@@ -498,17 +622,22 @@ def build_greedy_glide_path(
                 asset_returns=asset_returns,
                 weights=weights,
                 weight_matrix=weight_matrix,
+                candidate_indexes=candidate_indexes,
                 selected_weight_indexes=selected_weight_indexes,
                 portfolio_chunk_size=portfolio_chunk_size,
                 checkpoint_levels=checkpoint_levels,
             )
             num_paths = num_simulations
-            print(f"Horizon {horizon}: simulated dynamic paths", flush=True)
+            print(
+                f"Horizon {horizon}: simulated dynamic paths "
+                f"over {len(candidate_indexes):,} local candidates",
+                flush=True,
+            )
 
         horizon_summary = pd.concat(
             [
                 horizon_summary.reset_index(drop=True),
-                coords[["simplex_x", "simplex_y"]].reset_index(drop=True),
+                coords.iloc[candidate_indexes][["simplex_x", "simplex_y"]].reset_index(drop=True),
             ],
             axis=1,
         )
@@ -517,27 +646,35 @@ def build_greedy_glide_path(
             horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
                 horizon_summary["worst_4pct_mean"]
             )
-            horizon_summary["projected_weight_index"] = np.arange(len(horizon_summary))
+            horizon_summary["projected_weight_index"] = horizon_summary["selected_weight_index"]
             horizon_summary["projected_stock_weight"] = horizon_summary["stock_weight"]
             horizon_summary["projected_bond_weight"] = horizon_summary["bond_weight"]
             horizon_summary["projected_t_bill_weight"] = horizon_summary["t_bill_weight"]
             for column in ["q01", "q02", "q10", "median", "mean", "worst_4pct_mean"]:
                 horizon_summary[f"projected_{column}"] = horizon_summary[column]
         else:
-            horizon_summary["portfolio_smoothed_q02"] = (
-                portfolio_kernel @ horizon_summary["q02"].to_numpy(dtype=float)
+            horizon_summary["portfolio_smoothed_q02"] = smooth_metric_for_candidates(
+                horizon_summary,
+                "q02",
+                portfolio_bandwidth,
+                no_portfolio_smoothing,
             )
-            horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
-                portfolio_kernel @ horizon_summary["worst_4pct_mean"].to_numpy(dtype=float)
+            horizon_summary["portfolio_smoothed_worst_4pct_mean"] = smooth_metric_for_candidates(
+                horizon_summary,
+                "worst_4pct_mean",
+                portfolio_bandwidth,
+                no_portfolio_smoothing,
             )
             projected_summary = summarize_projected_continuation(
                 horizon=horizon,
-                paths=paths[:, : horizon + 1],
+                paths=paths[:, : horizon + effective_projection_steps],
                 asset_returns=asset_returns,
                 weight_matrix=weight_matrix,
+                candidate_indexes=candidate_indexes,
                 selected_weight_indexes=selected_weight_indexes,
                 previous_selected=previous_selected,
                 portfolio_chunk_size=portfolio_chunk_size,
+                projection_steps=effective_projection_steps,
             )
             horizon_summary = pd.concat(
                 [horizon_summary.reset_index(drop=True), projected_summary],
@@ -548,19 +685,21 @@ def build_greedy_glide_path(
             checkpoint_summary = pd.concat(
                 [
                     checkpoint_summary.reset_index(drop=True),
-                    coords[["simplex_x", "simplex_y"]].reset_index(drop=True),
+                    coords.iloc[candidate_indexes][["simplex_x", "simplex_y"]].reset_index(drop=True),
                 ],
                 axis=1,
             )
-            checkpoint_summary["portfolio_smoothed_q02"] = (
-                checkpoint_summary["q02"]
-                if no_portfolio_smoothing
-                else portfolio_kernel @ checkpoint_summary["q02"].to_numpy(dtype=float)
+            checkpoint_summary["portfolio_smoothed_q02"] = smooth_metric_for_candidates(
+                checkpoint_summary,
+                "q02",
+                portfolio_bandwidth,
+                no_portfolio_smoothing,
             )
-            checkpoint_summary["portfolio_smoothed_worst_4pct_mean"] = (
-                checkpoint_summary["worst_4pct_mean"]
-                if no_portfolio_smoothing
-                else portfolio_kernel @ checkpoint_summary["worst_4pct_mean"].to_numpy(dtype=float)
+            checkpoint_summary["portfolio_smoothed_worst_4pct_mean"] = smooth_metric_for_candidates(
+                checkpoint_summary,
+                "worst_4pct_mean",
+                portfolio_bandwidth,
+                no_portfolio_smoothing,
             )
             checkpoint_summary["horizon"] = horizon
             checkpoint_summary["block_length"] = BLOCK_LENGTH
@@ -570,6 +709,9 @@ def build_greedy_glide_path(
             )
             checkpoint_summary["path_distance_lambda"] = path_distance_lambda
             checkpoint_summary["path_direction_lambda"] = path_direction_lambda
+            checkpoint_summary["candidate_radius"] = candidate_radius
+            checkpoint_summary["projection_steps"] = projection_steps
+            checkpoint_summary["effective_projection_steps"] = effective_projection_steps
             checkpoint_candidate_summaries.append(checkpoint_summary)
 
         horizon_summary["horizon"] = horizon
@@ -580,6 +722,9 @@ def build_greedy_glide_path(
         )
         horizon_summary["path_distance_lambda"] = path_distance_lambda
         horizon_summary["path_direction_lambda"] = path_direction_lambda
+        horizon_summary["candidate_radius"] = candidate_radius
+        horizon_summary["projection_steps"] = projection_steps
+        horizon_summary["effective_projection_steps"] = effective_projection_steps
 
         selected, horizon_summary = choose_horizon_portfolio(
             horizon_summary,
@@ -588,7 +733,7 @@ def build_greedy_glide_path(
             path_distance_lambda,
             path_direction_lambda,
         )
-        selected_index = int(selected.name)
+        selected_index = int(selected["selected_weight_index"])
         selected_weight_indexes[horizon] = selected_index
         previous_selected = selected
         selected_rows.append(selected)
@@ -614,6 +759,7 @@ def build_greedy_glide_path(
         "stock_weight",
         "bond_weight",
         "t_bill_weight",
+        "selected_weight_index",
         "block_length",
         "num_simulations",
         "q01",
@@ -642,6 +788,9 @@ def build_greedy_glide_path(
         "is_selected",
         "path_distance_lambda",
         "path_direction_lambda",
+        "candidate_radius",
+        "projection_steps",
+        "effective_projection_steps",
         "prior_simplex_x",
         "prior_simplex_y",
         "portfolio_bandwidth",
@@ -653,6 +802,7 @@ def build_greedy_glide_path(
         "stock_weight",
         "bond_weight",
         "t_bill_weight",
+        "selected_weight_index",
         "block_length",
         "num_simulations",
         "q01",
@@ -665,6 +815,9 @@ def build_greedy_glide_path(
         "portfolio_smoothed_worst_4pct_mean",
         "path_distance_lambda",
         "path_direction_lambda",
+        "candidate_radius",
+        "projection_steps",
+        "effective_projection_steps",
         "portfolio_bandwidth",
         "simplex_x",
         "simplex_y",
@@ -678,7 +831,7 @@ def build_greedy_glide_path(
         candidate_summary[ordered_columns].sort_values(
             ["horizon", "stock_weight", "bond_weight", "t_bill_weight"]
         ).reset_index(drop=True),
-        path[[*ordered_columns, "selected_weight_index", "glidepath_note"]],
+        path[[*ordered_columns, "glidepath_note"]],
         checkpoint_summary[checkpoint_ordered_columns].sort_values(
             ["num_simulations", "horizon", "stock_weight", "bond_weight", "t_bill_weight"]
         ).reset_index(drop=True),
@@ -695,6 +848,8 @@ def write_metadata(
     portfolio_bandwidth: float,
     path_distance_lambda: float,
     path_direction_lambda: float,
+    candidate_radius: float,
+    projection_steps: int,
     no_portfolio_smoothing: bool,
 ) -> None:
     metadata = pd.DataFrame(
@@ -704,8 +859,13 @@ def write_metadata(
             ("num_simulations", num_simulations),
             ("seed", seed),
             ("max_horizon", max_horizon),
-            ("projected_continuation_horizon", max_horizon + 1 if max_horizon > 1 else max_horizon),
+            (
+                "projected_continuation_horizon",
+                max_horizon + projection_steps if max_horizon > 1 else max_horizon,
+            ),
             ("portfolio_chunk_size", portfolio_chunk_size),
+            ("candidate_radius", candidate_radius),
+            ("projection_steps", projection_steps),
             ("optimization_objective", "mean of worst 4% annualized outcomes"),
             ("quantile_interpolation", "lower"),
             ("horizon_1_anchor", "exact empirical one-year objective across observed years"),
@@ -719,7 +879,10 @@ def write_metadata(
             ),
             (
                 "projected_continuation",
-                "candidate H step is extended one more equal-direction step, projected to simplex and snapped to grid",
+                (
+                    "candidate H step is extended N same-distance same-direction steps, "
+                    "projected to simplex and snapped to grid"
+                ),
             ),
             ("path_distance_lambda", path_distance_lambda),
             ("path_direction_lambda", path_direction_lambda),
@@ -754,6 +917,8 @@ def write_outputs(
     portfolio_bandwidth: float,
     path_distance_lambda: float,
     path_direction_lambda: float,
+    candidate_radius: float,
+    projection_steps: int,
     no_portfolio_smoothing: bool,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -796,6 +961,8 @@ def write_outputs(
         portfolio_bandwidth=portfolio_bandwidth,
         path_distance_lambda=path_distance_lambda,
         path_direction_lambda=path_direction_lambda,
+        candidate_radius=candidate_radius,
+        projection_steps=projection_steps,
         no_portfolio_smoothing=no_portfolio_smoothing,
     )
 
@@ -825,6 +992,8 @@ def main() -> None:
         portfolio_bandwidth=args.portfolio_bandwidth,
         path_distance_lambda=args.path_distance_lambda,
         path_direction_lambda=args.path_direction_lambda,
+        candidate_radius=args.candidate_radius,
+        projection_steps=args.projection_steps,
         no_portfolio_smoothing=args.no_portfolio_smoothing,
     )
     write_outputs(
@@ -840,6 +1009,8 @@ def main() -> None:
         portfolio_bandwidth=args.portfolio_bandwidth,
         path_distance_lambda=args.path_distance_lambda,
         path_direction_lambda=args.path_direction_lambda,
+        candidate_radius=args.candidate_radius,
+        projection_steps=args.projection_steps,
         no_portfolio_smoothing=args.no_portfolio_smoothing,
     )
 

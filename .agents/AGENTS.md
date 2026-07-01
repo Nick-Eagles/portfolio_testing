@@ -101,7 +101,10 @@ Important context:
 - The optimization objective is now the mean of the worst 4% of annualized outcomes, `worst_4pct_mean`, rather than `q02`.
 - That objective is currently considered an improvement over `q02` for this work because it produces smoother surfaces and is less sensitive to tiny cutoff noise.
 - Horizon 1 is anchored using the exact empirical mean of the worst 4% of observed one-year outcomes. In the 99-year `from_1927` sample, that means the worst 4 years.
-- The current main glide path script uses a projected one-step continuation idea when scoring candidates. The separate `simulate_glide_path_lookahead.py` script preserves a more expensive local lookahead variant for comparison.
+- Regularization is off by default in the main glide path script: no portfolio smoothing, no path-distance penalty, and no path-direction reward unless explicitly requested.
+- After horizon 1, the main glide path script limits candidates to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio. The default candidate radius is `0.10`.
+- The current main glide path script uses same-direction/same-distance projected continuation when scoring candidates. The default is `4` projection steps. Projected weights are projected back to the simplex and snapped to the nearest grid portfolio.
+- The separate `simulate_glide_path_lookahead.py` script preserves a more expensive local lookahead variant for comparison.
 
 ## Retirement Component
 

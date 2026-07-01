@@ -117,6 +117,9 @@ Current main glide path settings:
 - horizons: `1` through `50`
 - default simulations in the main script: `20,000`
 - summaries include `q01`, `q02`, `q10`, `median`, `mean`, and `worst_4pct_mean`
+- regularization is off by default: no portfolio smoothing, no path-distance penalty, and no path-direction reward unless explicitly requested
+- after horizon 1, candidate portfolios are limited to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio; default radius is `0.10`
+- same-distance/same-direction projected continuation is configurable with `--projection-steps`; default is `4`
 - outputs live under `data/<dataset>/glide_path/` and `plots/<dataset>/glide_path/`
 
 Important changes from earlier glide path attempts:
@@ -125,8 +128,8 @@ Important changes from earlier glide path attempts:
 - This metric is currently preferred over `q02` because it appears smoother across horizons and across nearby portfolios.
 - Horizon 1 is now anchored using the exact empirical `worst_4pct_mean`. For the 99-year `from_1927` sample, that means averaging the worst 4 one-year outcomes.
 - The main script no longer uses the expensive pairwise local lookahead as its default logic.
-- Instead, for each candidate at horizon `H`, the main script projects one more step in the same simplex direction and scores the projected `H + 1` path, while still committing only the horizon-`H` decision.
-- If the projected continuation leaves the simplex, it is projected back to the valid simplex and snapped to the nearest grid portfolio.
+- Instead, for each candidate at horizon `H`, the main script projects `N` more steps in the same simplex direction and scores the projected `H + N` path, while still committing only the horizon-`H` decision.
+- If a projected continuation leaves the simplex, it is projected back to the valid simplex and snapped to the nearest grid portfolio.
 - `simulate_glide_path_lookahead.py` preserves the more expensive local one-step lookahead variant for experimentation and comparison.
 
 What we have learned so far in the glide path arm:
