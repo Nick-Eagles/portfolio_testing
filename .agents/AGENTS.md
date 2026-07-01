@@ -16,7 +16,7 @@ The repo currently has three components:
 
 The glide path work is still experimental. Do not describe it as final or clearly superior. It is a serious line of work, but the user is still testing whether it leads to better recommendations or simply more complexity.
 
-The retirement work is also experimental and currently has a known conceptual issue around contribution handling. Before modifying or interpreting the retirement arm, read `current_retirement_issue.md`.
+The retirement work is also experimental, but the major contribution-timing issue has been resolved. Treat it as a usable research arm rather than a finished recommendation engine.
 
 ## Core Data
 
@@ -131,8 +131,11 @@ External comparison inputs live in `external_comparisons/` and include approxima
 Important context:
 
 - The post-retirement block currently chooses a fixed portfolio by maximizing the mean terminal wealth ratio among the worst 2% of paths.
-- The pre-retirement greedy path has experimented with worst 4% and worst 2% objectives, same-direction/same-distance projection lookahead, neighborhood-limited candidate search, and annual contribution modeling.
-- The current annual contribution implementation has a known flaw: each plotted/optimized starting age is treated as starting fresh from zero rather than carrying forward wealth accumulated from earlier contributions. This especially distorts near-retirement logic. See `current_retirement_issue.md`.
+- The pre-retirement greedy path currently optimizes the mean of the worst 4% of path outcomes.
+- Pre-retirement scoring uses annual contributions, an estimated age-specific contribution scale, and an XIRR-to-age-65 metric multiplied by the post-retirement terminal wealth ratio.
+- The annual contribution scale is estimated from a no-contribution reference path, then applied during the final contribution-aware greedy pass so later ages are not treated as fresh zero-balance accounts.
+- The pre-retirement search uses same-direction/same-distance projection lookahead and a neighborhood-limited candidate set around the next older selected portfolio.
+- The external comparison script compares the project path against approximate Vanguard and Fidelity paths, and includes a random-path sanity check for pre-retirement comparisons.
 
 ## Important Scripts
 

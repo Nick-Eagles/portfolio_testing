@@ -42,7 +42,7 @@ There are now three distinct arms of the project:
 
 The glide path work should not be described as settled, final, or clearly superior. It exists because the user wants to test whether a time-varying recommendation can answer the original question more directly than the fixed-portfolio workflow.
 
-The retirement arm has a known conceptual issue around how annual contributions are represented. Read `current_retirement_issue.md` before interpreting retirement results or modifying that code.
+The retirement arm is still a research arm, but the major annual-contribution issue has been resolved. Its current implementation is coherent enough to use for comparisons and minor follow-up tweaks.
 
 ## Shared Modeling Choices
 
@@ -183,17 +183,45 @@ Major retirement-arm choices and experiments so far:
 - Pre-retirement logic borrowed the greedy glide-path machinery, including same-distance/same-direction projection lookahead and diagnostic plots.
 - Candidate search was sped up by limiting pre-retirement candidates to portfolios within `0.1` Euclidean simplex-coordinate distance of the next older selected portfolio.
 - Projection lookahead was made configurable with `--projection-steps`; the retirement default was set to 4.
-- Pre-retirement objective has been tried with worst 4% and worst 2% tails. The post-retirement objective remains worst 2%.
-- Annual contribution modeling was added to both the retirement simulation and external comparison script, normalizing pre-retirement terminal wealth by total real contributions.
+- Pre-retirement objective has been tried with worst 4% and worst 2% tails. Worst 2% was surprisingly comparable to Vanguard and Fidelity, but the current settled default is worst 4%. The post-retirement objective remains worst 2%.
+- Annual contribution modeling was added to both the retirement simulation and external comparison script.
 - A one-off option `--pre-retirement-target age65` was added to `simulate_retirement.py` to optimize accumulated age-65 wealth over contributions rather than age-90 terminal wealth after the post-retirement block. A one-off run wrote to `data/from_1927/retirement_age65_objective/`.
 
 Important finding from the annual-contribution work:
 
-The current contribution implementation is scale-free because every pre-retirement dollar in the objective comes from the same `annual_contribution` term. Changing `annual_contribution` from `1.0` to `0.01` does not change the optimum because both simulated balances and the denominator scale by the same constant. This is only appropriate for a start-from-zero-at-each-starting-age interpretation.
+The first contribution implementation was scale-free because every pre-retirement dollar in the objective came from the same `annual_contribution` term. Changing `annual_contribution` from `1.0` to `0.01` did not change the optimum because both simulated balances and the denominator scaled by the same constant. That was only appropriate for a start-from-zero-at-each-starting-age interpretation.
 
-The user identified a major conceptual flaw: for age-specific pre-retirement optimization and comparison plots, the current logic treats each starting age as a fresh account beginning at zero, then adds contributions from that starting age through age 65. That means, for example, the age-60 optimization/plot point ignores the large account balance that would normally have accumulated from contributions made at ages 20-59. Near retirement, this makes new annual contributions unrealistically large relative to modeled account wealth. This affects both `simulate_retirement.py` and the pre-retirement plotted quantities in `external_comparisons/compare_retirement_glide_paths.py`.
+The user identified a major conceptual flaw: for age-specific pre-retirement optimization and comparison plots, the old logic treated each starting age as a fresh account beginning at zero, then added contributions from that starting age through age 65. That meant, for example, the age-60 optimization/plot point ignored the large account balance that would normally have accumulated from contributions made at ages 20-59. Near retirement, this made new annual contributions unrealistically large relative to modeled account wealth.
 
-See `current_retirement_issue.md` for the focused issue description and likely directions for repair.
+That issue is now fixed; keep it only as historical context when interpreting older retirement runs.
+
+Current pre-retirement algorithm:
+
+1. Build a no-contribution reference path from age 65 down to age 20.
+2. Simulate annual contributions forward under that reference path and estimate, for each age, the mean ratio `annual_contribution / entering_balance` across bootstrapped paths. The denominator is the account balance entering that age before that year's contribution.
+3. Run the final greedy pre-retirement pass using those age-specific real contribution constants. Age 20 still starts from zero; later ages use a unit entering balance with a contribution scaled to the reference-path ratio.
+4. Preserve the contribution timing convention used by the simulator: contributions are added at the beginning of each pre-retirement year, then that year's return is applied.
+5. Use same-direction projection lookahead when scoring candidates, with projected contribution constants taken from the projected starting age.
+
+The current pre-retirement objective uses an XIRR-to-65 times post-retirement-block framing:
+
+- For each bootstrapped path and candidate, simulate the starting balance plus annual contributions through age 65.
+- Solve for the annual growth factor `g = 1 + XIRR` that would reproduce the age-65 balance from the same cash-flow schedule.
+- Convert that to a pre-retirement cumulative ratio with `g ** years_to_retirement`.
+- Multiply path-by-path by the post-retirement terminal wealth ratio from the selected post-retirement block.
+- Optimize the mean of the worst 4% of those combined ratios.
+
+This XIRR framing was chosen because it makes contributions matter without making near-retirement ages look like pure start-from-zero problems, and because multiplying by the post-retirement block avoids a sharp objective discontinuity at the retirement boundary.
+
+Current retirement comparison logic:
+
+- `external_comparisons/compare_retirement_glide_paths.py` compares the project path against approximate Vanguard and Fidelity glide paths over the same three asset classes.
+- The comparison script reads the project retirement output's pre-retirement contribution schedule; `--annual-contribution` is now mainly a fallback for older outputs that do not contain per-age contribution constants.
+- Pre-retirement comparison metrics use XIRR growth factors from each starting age through retirement. The pre-retirement grid plot currently shows annualized XIRR ratios, not cumulative products, because that gives clearer visual separation.
+- Post-retirement comparison metrics continue to compare terminal wealth ratios after the withdrawal block.
+- The comparison script also generates three synthetic random pre-retirement paths. Each starts from the selected age-65 portfolio, picks a fixed random direction in simplex space, and steps backward by a fixed distance intended to roughly hit a simplex edge by age 20.
+- The random paths are plotted in `external_comparisons/retirement_comparison_random_paths.pdf`.
+- Only the random path with the best age-20 worst-4% XIRR score is added to the pre-retirement comparison grid, labeled `Best Random`, so those plots usually show four curves: Ours, Vanguard, Fidelity, and Best Random.
 
 ## Interpretation Notes
 
