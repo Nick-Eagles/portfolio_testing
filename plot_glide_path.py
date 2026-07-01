@@ -73,7 +73,7 @@ def load_glide_path(input_dir: Path) -> pd.DataFrame:
         "bond_weight",
         "t_bill_weight",
         "mean",
-        "portfolio_smoothed_worst_4pct_mean",
+        "worst_4pct_mean",
     }
     missing_columns = required_columns - set(path.columns)
     if missing_columns:
@@ -204,7 +204,7 @@ def main() -> None:
                 "stock_weight",
                 "bond_weight",
                 "t_bill_weight",
-                "portfolio_smoothed_worst_4pct_mean",
+                "worst_4pct_mean",
                 "mean",
             ]
         ].to_string(index=False)

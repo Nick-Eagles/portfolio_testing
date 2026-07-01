@@ -117,7 +117,7 @@ Current main glide path settings:
 - horizons: `1` through `50`
 - default simulations in the main script: `20,000`
 - summaries include `q01`, `q02`, `q10`, `median`, `mean`, and `worst_4pct_mean`
-- regularization is off by default: no portfolio smoothing, no path-distance penalty, and no path-direction reward unless explicitly requested
+- the main glide path script no longer supports portfolio smoothing; path-distance and path-direction regularization are off by default unless explicitly requested
 - after horizon 1, candidate portfolios are limited to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio; default radius is `0.10`
 - same-distance/same-direction projected continuation is configurable with `--projection-steps`; default is `4`
 - outputs live under `data/<dataset>/glide_path/` and `plots/<dataset>/glide_path/`
@@ -137,8 +137,7 @@ What we have learned so far in the glide path arm:
 - The first naive idea of reading the fixed-portfolio optimum path as if it were already a glide path was mistaken. In the older arm, each horizon was optimized assuming a single fixed portfolio for the full horizon.
 - Raw glide path surfaces can still be noisy, and a lot of the current experimentation is about distinguishing real structure from artifacts of the objective function.
 - The projected extra-step scoring idea is a computational compromise: it tries to ask whether the current step is sensible if continued, without paying the full cost of evaluating all candidate pairs.
-- Smoothing diagnostics are now especially important because the key question is whether introducing the extra projected step makes portfolio smoothing more or less necessary.
-- The diagnostics script now produces both global and local simplex views, including projected `H + 1` surfaces and before/after smoothing comparisons for the projected downside metric.
+- The old smoothing diagnostics script can still inspect raw versus smoothed projected surfaces as an exploratory tool, but portfolio smoothing is no longer part of the main glide-path simulation.
 
 Current glide path outputs include:
 

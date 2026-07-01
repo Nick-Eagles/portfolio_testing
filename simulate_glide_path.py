@@ -6,9 +6,7 @@ import numpy as np
 import pandas as pd
 
 from convex_smoothing import (
-    DEFAULT_PORTFOLIO_BANDWIDTH,
     add_simplex_coordinates,
-    gaussian_row_stochastic_weights,
 )
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from portfolio_helpers import MAX_HORIZON, RETURN_COLUMNS, generate_portfolio_weights
@@ -36,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Greedily construct a dynamic worst-4%-mean-optimized glidepath using "
-            "stationary circular resampling and portfolio-simplex smoothing."
+            "stationary circular resampling."
         )
     )
     parser.add_argument(
@@ -68,12 +66,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_PORTFOLIO_CHUNK_SIZE,
         help="Number of simplex portfolios to evaluate at once.",
-    )
-    parser.add_argument(
-        "--portfolio-bandwidth",
-        type=float,
-        default=DEFAULT_PORTFOLIO_BANDWIDTH,
-        help="Gaussian kernel bandwidth in simplex-coordinate units for portfolio smoothing.",
     )
     parser.add_argument(
         "--path-distance-lambda",
@@ -110,24 +102,6 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Number of same-distance, same-direction longer-horizon projection steps "
             "used when scoring candidates. Horizon 1 uses no projection."
-        ),
-    )
-    parser.add_argument(
-        "--no-portfolio-smoothing",
-        action="store_true",
-        default=True,
-        help=(
-            "Select from raw worst-4%-mean values instead of portfolio-smoothed values. "
-            "This is the default."
-        ),
-    )
-    parser.add_argument(
-        "--portfolio-smoothing",
-        dest="no_portfolio_smoothing",
-        action="store_false",
-        help=(
-            "Use portfolio-smoothed q02 and worst-4%-mean columns for reporting. "
-            "Selection still uses projected_worst_4pct_mean."
         ),
     )
     parser.add_argument(
@@ -257,41 +231,6 @@ def summarize_candidates(
     return result
 
 
-def make_portfolio_smoothing_kernel(
-    weights: pd.DataFrame,
-    portfolio_bandwidth: float,
-    no_portfolio_smoothing: bool,
-) -> tuple[pd.DataFrame, np.ndarray]:
-    coords = add_simplex_coordinates(weights)
-    if no_portfolio_smoothing:
-        return coords, np.eye(len(weights), dtype=float)
-
-    coordinate_matrix = coords[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
-    distances = np.sqrt(
-        (coordinate_matrix[:, None, 0] - coordinate_matrix[None, :, 0]) ** 2
-        + (coordinate_matrix[:, None, 1] - coordinate_matrix[None, :, 1]) ** 2
-    )
-    return coords, gaussian_row_stochastic_weights(distances, portfolio_bandwidth)
-
-
-def smooth_metric_for_candidates(
-    horizon_summary: pd.DataFrame,
-    metric: str,
-    portfolio_bandwidth: float,
-    no_portfolio_smoothing: bool,
-) -> np.ndarray:
-    if no_portfolio_smoothing:
-        return horizon_summary[metric].to_numpy(dtype=float)
-
-    coords = horizon_summary[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
-    distances = np.sqrt(
-        (coords[:, None, 0] - coords[None, :, 0]) ** 2
-        + (coords[:, None, 1] - coords[None, :, 1]) ** 2
-    )
-    kernel = gaussian_row_stochastic_weights(distances, portfolio_bandwidth)
-    return kernel @ horizon_summary[metric].to_numpy(dtype=float)
-
-
 def zscore_values(values: pd.Series) -> pd.Series:
     mean = values.mean()
     std = values.std(ddof=0)
@@ -334,9 +273,6 @@ def choose_horizon_portfolio(
             + (result["simplex_y"] - previous_selected["simplex_y"]) ** 2
         )
 
-    result["portfolio_smoothed_worst_4pct_mean_zscore"] = zscore_values(
-        result["portfolio_smoothed_worst_4pct_mean"]
-    )
     result["projected_worst_4pct_mean_zscore"] = zscore_values(
         result["projected_worst_4pct_mean"]
     )
@@ -370,8 +306,6 @@ def choose_horizon_portfolio(
             "projected_worst_4pct_mean_zscore",
             "projected_worst_4pct_mean",
             "worst_4pct_mean",
-            "portfolio_smoothed_worst_4pct_mean_zscore",
-            "portfolio_smoothed_worst_4pct_mean",
             "q02",
             "mean",
             "stock_weight",
@@ -379,8 +313,6 @@ def choose_horizon_portfolio(
             "t_bill_weight",
         ],
         ascending=[
-            False,
-            False,
             False,
             False,
             False,
@@ -545,12 +477,10 @@ def build_greedy_glide_path(
     seed: int,
     max_horizon: int,
     portfolio_chunk_size: int,
-    portfolio_bandwidth: float,
     path_distance_lambda: float,
     path_direction_lambda: float,
     candidate_radius: float,
     projection_steps: int,
-    no_portfolio_smoothing: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
         raise ValueError("num_simulations must be at least 1.")
@@ -560,8 +490,6 @@ def build_greedy_glide_path(
         raise ValueError(f"max_horizon must be at most {MAX_HORIZON}.")
     if portfolio_chunk_size < 1:
         raise ValueError("portfolio_chunk_size must be at least 1.")
-    if portfolio_bandwidth <= 0:
-        raise ValueError("portfolio_bandwidth must be positive.")
     if path_distance_lambda < 0:
         raise ValueError("path_distance_lambda must be non-negative.")
     if path_direction_lambda < 0:
@@ -642,10 +570,6 @@ def build_greedy_glide_path(
             axis=1,
         )
         if horizon == 1:
-            horizon_summary["portfolio_smoothed_q02"] = horizon_summary["q02"]
-            horizon_summary["portfolio_smoothed_worst_4pct_mean"] = (
-                horizon_summary["worst_4pct_mean"]
-            )
             horizon_summary["projected_weight_index"] = horizon_summary["selected_weight_index"]
             horizon_summary["projected_stock_weight"] = horizon_summary["stock_weight"]
             horizon_summary["projected_bond_weight"] = horizon_summary["bond_weight"]
@@ -653,18 +577,6 @@ def build_greedy_glide_path(
             for column in ["q01", "q02", "q10", "median", "mean", "worst_4pct_mean"]:
                 horizon_summary[f"projected_{column}"] = horizon_summary[column]
         else:
-            horizon_summary["portfolio_smoothed_q02"] = smooth_metric_for_candidates(
-                horizon_summary,
-                "q02",
-                portfolio_bandwidth,
-                no_portfolio_smoothing,
-            )
-            horizon_summary["portfolio_smoothed_worst_4pct_mean"] = smooth_metric_for_candidates(
-                horizon_summary,
-                "worst_4pct_mean",
-                portfolio_bandwidth,
-                no_portfolio_smoothing,
-            )
             projected_summary = summarize_projected_continuation(
                 horizon=horizon,
                 paths=paths[:, : horizon + effective_projection_steps],
@@ -689,24 +601,9 @@ def build_greedy_glide_path(
                 ],
                 axis=1,
             )
-            checkpoint_summary["portfolio_smoothed_q02"] = smooth_metric_for_candidates(
-                checkpoint_summary,
-                "q02",
-                portfolio_bandwidth,
-                no_portfolio_smoothing,
-            )
-            checkpoint_summary["portfolio_smoothed_worst_4pct_mean"] = smooth_metric_for_candidates(
-                checkpoint_summary,
-                "worst_4pct_mean",
-                portfolio_bandwidth,
-                no_portfolio_smoothing,
-            )
             checkpoint_summary["horizon"] = horizon
             checkpoint_summary["block_length"] = BLOCK_LENGTH
             checkpoint_summary["num_simulations"] = checkpoint
-            checkpoint_summary["portfolio_bandwidth"] = (
-                np.nan if no_portfolio_smoothing else portfolio_bandwidth
-            )
             checkpoint_summary["path_distance_lambda"] = path_distance_lambda
             checkpoint_summary["path_direction_lambda"] = path_direction_lambda
             checkpoint_summary["candidate_radius"] = candidate_radius
@@ -717,9 +614,6 @@ def build_greedy_glide_path(
         horizon_summary["horizon"] = horizon
         horizon_summary["block_length"] = BLOCK_LENGTH
         horizon_summary["num_simulations"] = num_paths
-        horizon_summary["portfolio_bandwidth"] = (
-            np.nan if horizon == 1 or no_portfolio_smoothing else portfolio_bandwidth
-        )
         horizon_summary["path_distance_lambda"] = path_distance_lambda
         horizon_summary["path_direction_lambda"] = path_direction_lambda
         horizon_summary["candidate_radius"] = candidate_radius
@@ -745,7 +639,7 @@ def build_greedy_glide_path(
             f"bonds={selected['bond_weight']:.2f}, "
             f"t-bills={selected['t_bill_weight']:.2f}, "
             f"worst_4pct_mean={selected['worst_4pct_mean']:.5f}, "
-            f"smoothed_worst_4pct_mean={selected['portfolio_smoothed_worst_4pct_mean']:.5f}",
+            f"projected_worst_4pct_mean={selected['projected_worst_4pct_mean']:.5f}",
             flush=True,
         )
 
@@ -768,9 +662,6 @@ def build_greedy_glide_path(
         "median",
         "mean",
         "worst_4pct_mean",
-        "portfolio_smoothed_q02",
-        "portfolio_smoothed_worst_4pct_mean",
-        "portfolio_smoothed_worst_4pct_mean_zscore",
         "projected_weight_index",
         "projected_stock_weight",
         "projected_bond_weight",
@@ -793,7 +684,6 @@ def build_greedy_glide_path(
         "effective_projection_steps",
         "prior_simplex_x",
         "prior_simplex_y",
-        "portfolio_bandwidth",
         "simplex_x",
         "simplex_y",
     ]
@@ -811,14 +701,11 @@ def build_greedy_glide_path(
         "median",
         "mean",
         "worst_4pct_mean",
-        "portfolio_smoothed_q02",
-        "portfolio_smoothed_worst_4pct_mean",
         "path_distance_lambda",
         "path_direction_lambda",
         "candidate_radius",
         "projection_steps",
         "effective_projection_steps",
-        "portfolio_bandwidth",
         "simplex_x",
         "simplex_y",
     ]
@@ -845,12 +732,10 @@ def write_metadata(
     seed: int,
     max_horizon: int,
     portfolio_chunk_size: int,
-    portfolio_bandwidth: float,
     path_distance_lambda: float,
     path_direction_lambda: float,
     candidate_radius: float,
     projection_steps: int,
-    no_portfolio_smoothing: bool,
 ) -> None:
     metadata = pd.DataFrame(
         [
@@ -870,9 +755,6 @@ def write_metadata(
             ("quantile_interpolation", "lower"),
             ("horizon_1_anchor", "exact empirical one-year objective across observed years"),
             ("worst_tail_fraction", WORST_TAIL_FRACTION),
-            ("portfolio_bandwidth", portfolio_bandwidth),
-            ("no_portfolio_smoothing", no_portfolio_smoothing),
-            ("horizon_smoothing", False),
             (
                 "selection_scale",
                 "per-horizon z-score of projected_worst_4pct_mean with penalties at horizon H",
@@ -914,12 +796,10 @@ def write_outputs(
     seed: int,
     max_horizon: int,
     portfolio_chunk_size: int,
-    portfolio_bandwidth: float,
     path_distance_lambda: float,
     path_direction_lambda: float,
     candidate_radius: float,
     projection_steps: int,
-    no_portfolio_smoothing: bool,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -958,12 +838,10 @@ def write_outputs(
         seed=seed,
         max_horizon=max_horizon,
         portfolio_chunk_size=portfolio_chunk_size,
-        portfolio_bandwidth=portfolio_bandwidth,
         path_distance_lambda=path_distance_lambda,
         path_direction_lambda=path_direction_lambda,
         candidate_radius=candidate_radius,
         projection_steps=projection_steps,
-        no_portfolio_smoothing=no_portfolio_smoothing,
     )
 
     print(f"Wrote {display_path(candidate_parquet)} ({len(candidate_summary):,} rows)")
@@ -989,12 +867,10 @@ def main() -> None:
         seed=args.seed,
         max_horizon=args.max_horizon,
         portfolio_chunk_size=args.portfolio_chunk_size,
-        portfolio_bandwidth=args.portfolio_bandwidth,
         path_distance_lambda=args.path_distance_lambda,
         path_direction_lambda=args.path_direction_lambda,
         candidate_radius=args.candidate_radius,
         projection_steps=args.projection_steps,
-        no_portfolio_smoothing=args.no_portfolio_smoothing,
     )
     write_outputs(
         candidate_summary=candidate_summary,
@@ -1006,12 +882,10 @@ def main() -> None:
         seed=args.seed,
         max_horizon=args.max_horizon,
         portfolio_chunk_size=args.portfolio_chunk_size,
-        portfolio_bandwidth=args.portfolio_bandwidth,
         path_distance_lambda=args.path_distance_lambda,
         path_direction_lambda=args.path_direction_lambda,
         candidate_radius=args.candidate_radius,
         projection_steps=args.projection_steps,
-        no_portfolio_smoothing=args.no_portfolio_smoothing,
     )
 
     print("Selected glidepath points:")
@@ -1023,9 +897,7 @@ def main() -> None:
                 "bond_weight",
                 "t_bill_weight",
                 "worst_4pct_mean",
-                "portfolio_smoothed_worst_4pct_mean",
                 "q02",
-                "portfolio_smoothed_q02",
                 "mean",
                 "prior_simplex_step_distance",
             ]
