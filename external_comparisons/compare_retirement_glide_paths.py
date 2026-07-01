@@ -1,4 +1,5 @@
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -12,8 +13,10 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
 from portfolio_helpers import RETURN_COLUMNS
 from simulate_glide_path import mean_of_worst_tail_fraction
+from simulate_glide_path import project_rows_to_simplex
 from simulate_retirement import (
     BLOCK_LENGTH,
     DEFAULT_SEED,
@@ -41,6 +44,7 @@ APPROACH_COLORS = {
     "Ours": "#111111",
     "Vanguard": "#1f77b4",
     "Fidelity": "#2ca02c",
+    "Best Random": "#d95f02",
 }
 PRE_RETIREMENT_METRICS = [
     ("terminal_worst_1pct_mean", "Worst 1%"),
@@ -180,6 +184,22 @@ def make_shared_paths(
     )
 
 
+def simplex_coords_to_weights(simplex_points: np.ndarray) -> np.ndarray:
+    stock_weight = 2 * simplex_points[:, 1] / math.sqrt(3)
+    t_bill_weight = simplex_points[:, 0] - 0.5 * stock_weight
+    bond_weight = 1 - stock_weight - t_bill_weight
+    weights = np.column_stack([stock_weight, bond_weight, t_bill_weight])
+    return project_rows_to_simplex(weights)
+
+
+def simplex_point_is_inside(simplex_point: np.ndarray, tolerance: float = 1e-9) -> bool:
+    weights = simplex_coords_to_weights(np.asarray([simplex_point], dtype=float))[0]
+    reconstructed = add_simplex_coordinates(
+        pd.DataFrame([dict(zip(WEIGHT_COLUMNS, weights, strict=True))])
+    )[["simplex_x", "simplex_y"]].to_numpy(dtype=float)[0]
+    return np.linalg.norm(reconstructed - simplex_point) <= tolerance
+
+
 def contribution_schedule_from_retirement_path(
     retirement_path: pd.DataFrame,
     fallback_annual_contribution: float,
@@ -211,6 +231,64 @@ def contribution_schedule_from_retirement_path(
         raise ValueError("Pre-retirement annual_contribution values must be finite and positive.")
 
     return dict(zip(expected_ages, contributions, strict=True))
+
+
+def ray_distance_to_simplex_boundary(
+    start_point: np.ndarray,
+    direction: np.ndarray,
+) -> float:
+    if not simplex_point_is_inside(start_point):
+        raise ValueError("start_point must lie inside the simplex.")
+
+    low = 0.0
+    high = 1.0
+    while simplex_point_is_inside(start_point + high * direction):
+        high *= 2
+        if high > 100:
+            raise ValueError("Could not find simplex boundary intersection for ray.")
+
+    for _ in range(64):
+        mid = (low + high) / 2
+        if simplex_point_is_inside(start_point + mid * direction):
+            low = mid
+        else:
+            high = mid
+    return low
+
+
+def generate_random_pre_retirement_paths(
+    retirement_path: pd.DataFrame,
+    num_paths: int,
+    seed: int,
+) -> dict[str, pd.DataFrame]:
+    if num_paths < 1:
+        raise ValueError("num_paths must be positive.")
+
+    retirement_row = (
+        normalize_age_weight_path(retirement_path, "starting_age")
+        .loc[lambda df: df["starting_age"] == RETIREMENT_AGE]
+        .iloc[0]
+    )
+    start_point = add_simplex_coordinates(pd.DataFrame([retirement_row]))[
+        ["simplex_x", "simplex_y"]
+    ].to_numpy(dtype=float)[0]
+
+    rng = np.random.default_rng(seed)
+    ages = np.arange(MIN_STARTING_AGE, RETIREMENT_AGE + 1, dtype=int)
+    num_steps = RETIREMENT_AGE - MIN_STARTING_AGE
+    result = {}
+    for path_number in range(1, num_paths + 1):
+        angle = rng.uniform(0.0, 2 * math.pi)
+        direction = np.array([math.cos(angle), math.sin(angle)], dtype=float)
+        max_distance = ray_distance_to_simplex_boundary(start_point, direction)
+        step_distance = max_distance / max(num_steps, 1)
+        offsets = (RETIREMENT_AGE - ages)[:, None] * step_distance * direction[None, :]
+        simplex_points = start_point[None, :] + offsets
+        weights = simplex_coords_to_weights(simplex_points)
+        path = pd.DataFrame(weights, columns=WEIGHT_COLUMNS)
+        path.insert(0, "starting_age", ages)
+        result[f"Random {path_number}"] = path
+    return result
 
 
 def xirr_growth_ratio_from_terminal_values(
@@ -417,9 +495,39 @@ def plot_pre_retirement_worst_4pct(data: pd.DataFrame, output_dir: Path) -> None
     print(f"Wrote {display_path(output_pdf)}")
 
 
+def plot_random_paths(
+    random_paths: dict[str, pd.DataFrame],
+    output_dir: Path,
+) -> None:
+    output_pdf = output_dir / "retirement_comparison_random_paths.pdf"
+    fig, ax = plt.subplots(figsize=(8, 8), constrained_layout=True)
+    draw_simplex_outline(ax)
+
+    colors = ["#d95f02", "#7570b3", "#1b9e77"]
+    for (path_name, path), color in zip(random_paths.items(), colors, strict=False):
+        path_with_coords = add_simplex_coordinates(path)
+        ax.plot(
+            path_with_coords["simplex_x"],
+            path_with_coords["simplex_y"],
+            color=color,
+            linewidth=2.0,
+            label=path_name,
+        )
+        age20 = path_with_coords[path_with_coords["starting_age"] == MIN_STARTING_AGE].iloc[0]
+        age65 = path_with_coords[path_with_coords["starting_age"] == RETIREMENT_AGE].iloc[0]
+        ax.scatter(age65["simplex_x"], age65["simplex_y"], color=color, s=35, zorder=3)
+        ax.scatter(age20["simplex_x"], age20["simplex_y"], color=color, s=35, marker="s", zorder=3)
+
+    ax.legend(frameon=False, loc="upper right")
+    fig.savefig(output_pdf)
+    plt.close(fig)
+    print(f"Wrote {display_path(output_pdf)}")
+
+
 def write_outputs(
     pre_retirement: pd.DataFrame,
     post_retirement: pd.DataFrame,
+    random_paths: dict[str, pd.DataFrame],
     output_dir: Path,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -431,6 +539,7 @@ def write_outputs(
     print(f"Wrote {display_path(post_csv)}")
     plot_pre_retirement_worst_4pct(pre_retirement, output_dir)
     plot_post_retirement_metrics(post_retirement, output_dir)
+    plot_random_paths(random_paths, output_dir)
 
 
 def plot_post_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
@@ -498,10 +607,35 @@ def main() -> None:
         "Vanguard": load_external_path(SCRIPT_DIR / "vanguard_glide_path.csv"),
         "Fidelity": load_external_path(SCRIPT_DIR / "fidelity_glide_path.csv"),
     }
+    random_paths = generate_random_pre_retirement_paths(
+        retirement_path=retirement_result,
+        num_paths=3,
+        seed=args.seed,
+    )
     pre_retirement_strategies = use_shared_post_retirement_block(
         strategies=strategies,
         shared_post_retirement_path=strategies["Ours"],
     )
+    random_pre_retirement_strategies = use_shared_post_retirement_block(
+        strategies=random_paths,
+        shared_post_retirement_path=strategies["Ours"],
+    )
+    random_pre_retirement, _ = evaluate_paths(
+        returns=returns,
+        paths=paths,
+        strategies=strategies,
+        pre_retirement_strategies=random_pre_retirement_strategies,
+        contribution_by_age=contribution_by_age,
+    )
+    best_random_name = (
+        random_pre_retirement[random_pre_retirement["starting_age"] == MIN_STARTING_AGE]
+        .sort_values(
+            ["terminal_worst_4pct_mean", "terminal_mean", "approach"],
+            ascending=[False, False, True],
+        )
+        .iloc[0]["approach"]
+    )
+    pre_retirement_strategies["Best Random"] = random_pre_retirement_strategies[best_random_name]
 
     pre_retirement, post_retirement = evaluate_paths(
         returns=returns,
@@ -513,6 +647,7 @@ def main() -> None:
     write_outputs(
         pre_retirement=pre_retirement,
         post_retirement=post_retirement,
+        random_paths=random_paths,
         output_dir=args.output_dir,
     )
 
