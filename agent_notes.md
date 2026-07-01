@@ -217,7 +217,7 @@ Current retirement comparison logic:
 
 - `external_comparisons/compare_retirement_glide_paths.py` compares the project path against approximate Vanguard and Fidelity glide paths over the same three asset classes.
 - The comparison script reads the project retirement output's pre-retirement contribution schedule; `--annual-contribution` is now mainly a fallback for older outputs that do not contain per-age contribution constants.
-- Pre-retirement comparison metrics use XIRR growth factors from each starting age through retirement. The pre-retirement grid plot currently shows annualized XIRR ratios, not cumulative products, because that gives clearer visual separation.
+- Pre-retirement comparison metrics use XIRR growth factors from each starting age through retirement.
 - Post-retirement comparison metrics continue to compare terminal wealth ratios after the withdrawal block.
 - The comparison script also generates three synthetic random pre-retirement paths. Each starts from the selected age-65 portfolio, picks a fixed random direction in simplex space, and steps backward by a fixed distance intended to roughly hit a simplex edge by age 20.
 - The random paths are plotted in `external_comparisons/retirement_comparison_random_paths.pdf`.
