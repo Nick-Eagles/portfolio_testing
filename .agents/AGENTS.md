@@ -84,9 +84,7 @@ This is the newer experimental component. It tries to recommend a year-by-year o
 Primary scripts:
 
 - `simulate_glide_path.py`
-- `simulate_glide_path_lookahead.py`
 - `plot_glide_path.py`
-- `plot_glide_path_smoothing_diagnostics.py`
 
 Primary outputs:
 
@@ -104,7 +102,7 @@ Important context:
 - The main glide path script no longer supports portfolio smoothing. Path-distance and path-direction regularization are off by default unless explicitly requested.
 - After horizon 1, the main glide path script limits candidates to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio. The default candidate radius is `0.10`.
 - The current main glide path script uses same-direction/same-distance projected continuation when scoring candidates. The default is `4` projection steps. Projected weights are projected back to the simplex and snapped to the nearest grid portfolio.
-- The separate `simulate_glide_path_lookahead.py` script preserves a more expensive local lookahead variant for comparison.
+- Portfolio smoothing was removed from the glide path arm because it is no longer practical with neighborhood-limited candidate search, and the `worst_4pct_mean` surfaces did not show local cross-portfolio spikes that needed smoothing even with lookahead.
 
 ## Retirement Component
 

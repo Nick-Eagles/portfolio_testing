@@ -106,9 +106,7 @@ This arm tries to optimize a path of portfolios rather than one fixed portfolio 
 Core scripts:
 
 - `simulate_glide_path.py`
-- `simulate_glide_path_lookahead.py`
 - `plot_glide_path.py`
-- `plot_glide_path_smoothing_diagnostics.py`
 - `q02_diff_density.py`
 
 Current main glide path settings:
@@ -130,14 +128,16 @@ Important changes from earlier glide path attempts:
 - The main script no longer uses the expensive pairwise local lookahead as its default logic.
 - Instead, for each candidate at horizon `H`, the main script projects `N` more steps in the same simplex direction and scores the projected `H + N` path, while still committing only the horizon-`H` decision.
 - If a projected continuation leaves the simplex, it is projected back to the valid simplex and snapped to the nearest grid portfolio.
-- `simulate_glide_path_lookahead.py` preserves the more expensive local one-step lookahead variant for experimentation and comparison.
+- The old alternate `simulate_glide_path_lookahead.py` script was removed. `simulate_glide_path.py` is now the single glide-path simulation script and includes the lookahead-style projected continuation logic.
 
 What we have learned so far in the glide path arm:
 
 - The first naive idea of reading the fixed-portfolio optimum path as if it were already a glide path was mistaken. In the older arm, each horizon was optimized assuming a single fixed portfolio for the full horizon.
 - Raw glide path surfaces can still be noisy, and a lot of the current experimentation is about distinguishing real structure from artifacts of the objective function.
 - The projected extra-step scoring idea is a computational compromise: it tries to ask whether the current step is sensible if continued, without paying the full cost of evaluating all candidate pairs.
-- The old smoothing diagnostics script can still inspect raw versus smoothed projected surfaces as an exploratory tool, but portfolio smoothing is no longer part of the main glide-path simulation.
+- Portfolio smoothing is no longer practical in the glide path arm because the current search only evaluates a limited neighborhood after horizon 1, rather than the full simplex. Full-simplex smoothing no longer fits the candidate set cleanly.
+- Portfolio smoothing also did not look helpful in the current state of the project: with the `worst_4pct_mean` metric, including projected lookahead, the cross-portfolio metric surfaces did not have obvious local spikes that needed smoothing out.
+- The old `plot_glide_path_smoothing_diagnostics.py` script was removed along with portfolio smoothing support.
 
 Current glide path outputs include:
 
@@ -147,7 +147,6 @@ Current glide path outputs include:
 - `data/<dataset>/glide_path/glide_path_metadata.csv`
 - `plots/<dataset>/glide_path/glide_path.pdf`
 - `plots/<dataset>/glide_path/glide_path_expected_returns.pdf`
-- `plots/<dataset>/glide_path/smoothing_diagnostics/`
 
 ## Convergence Diagnostics
 
