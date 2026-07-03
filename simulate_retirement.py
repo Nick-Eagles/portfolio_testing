@@ -7,12 +7,14 @@ import pandas as pd
 
 from convex_smoothing import add_simplex_coordinates
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
-from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
-from simulate_glide_path import (
+from path_simulation import (
+    build_neighbor_indexes,
+    lower_quantiles_in_place,
     mean_of_worst_tail_fraction,
-    nearest_portfolio_indexes,
-    project_rows_to_simplex,
+    projected_weight_indexes_for_steps,
+    zscore_values,
 )
+from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
 from simulate_returns import (
     generate_balanced_initial_year_indexes,
     generate_resampled_paths,
@@ -147,15 +149,8 @@ def display_path(path: Path) -> Path:
         return path
 
 
-def lower_quantiles_in_place(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    kth_indexes = [int(np.floor((values.shape[0] - 1) * quantile)) for quantile in QUANTILES]
-    values.partition(kth_indexes, axis=0)
-    q01, q02, q10, median = values[kth_indexes]
-    return q01, q02, q10, median
-
-
 def summarize_terminal_balances(terminal_balances: np.ndarray) -> dict[str, np.ndarray]:
-    q01, q02, q10, median = lower_quantiles_in_place(terminal_balances.copy())
+    q01, q02, q10, median = lower_quantiles_in_place(terminal_balances.copy(), QUANTILES)
     return {
         "terminal_q01": q01,
         "terminal_q02": q02,
@@ -233,26 +228,6 @@ def constant_growth_ratio_from_terminal_value(
         low = np.where(future_value(mid) >= target, low, mid)
 
     return high**num_years
-
-
-def zscore_values(values: pd.Series) -> pd.Series:
-    mean = values.mean()
-    std = values.std(ddof=0)
-    if std <= 0 or not np.isfinite(std):
-        return pd.Series(np.zeros(len(values), dtype=float), index=values.index)
-    return (values - mean) / std
-
-
-def build_neighbor_indexes(coords: pd.DataFrame, radius: float) -> list[np.ndarray]:
-    if radius <= 0:
-        raise ValueError("candidate_radius must be positive.")
-
-    coord_matrix = coords[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
-    distances = np.sqrt(
-        (coord_matrix[:, None, 0] - coord_matrix[None, :, 0]) ** 2
-        + (coord_matrix[:, None, 1] - coord_matrix[None, :, 1]) ** 2
-    )
-    return [np.flatnonzero(row <= radius) for row in distances]
 
 
 def get_reference_direction(path_rows_descending_age: list[pd.Series]) -> np.ndarray | None:
@@ -488,27 +463,6 @@ def projected_pre_retirement_terminal_balances(
         num_years=num_years,
     )
     return pre_retirement_growth_ratio * post_retirement_balance_ratios[:, None]
-
-
-def projected_weight_indexes_for_steps(
-    previous_weights: np.ndarray,
-    candidate_weights: np.ndarray,
-    weight_matrix: np.ndarray,
-    projection_steps: int,
-    portfolio_chunk_size: int,
-) -> list[np.ndarray]:
-    direction = candidate_weights - previous_weights
-    result = []
-    for step in range(1, projection_steps + 1):
-        projected_weights = project_rows_to_simplex(candidate_weights + step * direction)
-        result.append(
-            nearest_portfolio_indexes(
-                projected_weights=projected_weights,
-                weight_matrix=weight_matrix,
-                portfolio_chunk_size=portfolio_chunk_size,
-            )
-        )
-    return result
 
 
 def summarize_pre_retirement_age(

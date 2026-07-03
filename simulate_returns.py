@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from path_simulation import lower_quantiles_in_place
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
 
 
@@ -138,12 +139,6 @@ def generate_resampled_paths(
         paths[:, year_offset] = current_year_indexes
 
     return paths
-
-
-def lower_quantiles_in_place(values: np.ndarray, quantiles: tuple[float, ...]) -> np.ndarray:
-    kth_indexes = [int(np.floor((values.shape[0] - 1) * quantile)) for quantile in quantiles]
-    values.partition(kth_indexes, axis=0)
-    return values[kth_indexes]
 
 
 def summarize_annualized_returns(

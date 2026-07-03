@@ -14,9 +14,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
+from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS
-from simulate_glide_path import mean_of_worst_tail_fraction
-from simulate_glide_path import project_rows_to_simplex
 from simulate_retirement import (
     BLOCK_LENGTH,
     DEFAULT_SEED,
