@@ -5,10 +5,12 @@ import pandas as pd
 from plotnine import (
     aes,
     element_text,
+    geom_density,
     geom_line,
     ggplot,
     labs,
     scale_color_manual,
+    scale_fill_manual,
     scale_y_log10,
     theme,
     theme_minimal,
@@ -77,6 +79,7 @@ def get_output_paths(dataset: str) -> tuple[Path, Path]:
     return (
         variant.data_dir / "asset_class_real_returns.csv",
         variant.plots_dir / "asset_class_line_plot.pdf",
+        variant.plots_dir / "asset_class_real_return_density_plot.pdf",
     )
 
 
@@ -126,16 +129,86 @@ def make_growth_plot(returns: pd.DataFrame, plot_file: Path, title: str) -> None
     plot.save(plot_file, verbose=False)
 
 
+def make_density_plot(returns: pd.DataFrame, plot_file: Path, title: str) -> None:
+    plot_data = returns.melt(
+        id_vars="year",
+        value_vars=list(SOURCE_COLUMNS.values()),
+        var_name="asset_class",
+        value_name="real_return_pct",
+    )
+    plot_data["asset_class"] = plot_data["asset_class"].map(PLOT_LABELS)
+
+    plot = (
+        ggplot(plot_data, aes("real_return_pct", color="asset_class", fill="asset_class"))
+        + geom_density(alpha=0.2, size=0.9)
+        + scale_color_manual(values=PLOT_COLORS)
+        + scale_fill_manual(values=PLOT_COLORS)
+        + labs(
+            title=title,
+            x="Real return (%)",
+            y="Density",
+            color="Asset class",
+            fill="Asset class",
+        )
+        + theme_minimal(base_size=11)
+        + theme(
+            figure_size=(10, 6),
+            plot_title=element_text(weight="bold"),
+            legend_position="bottom",
+        )
+    )
+
+    plot_file.parent.mkdir(parents=True, exist_ok=True)
+    plot.save(plot_file, verbose=False)
+
+
+def print_pairwise_correlations(returns: pd.DataFrame, dataset: str) -> None:
+    correlations = returns[list(SOURCE_COLUMNS.values())].corr()
+    columns = list(SOURCE_COLUMNS.values())
+
+    print(f"Real return correlations for {dataset}:")
+    for idx, left in enumerate(columns):
+        for right in columns[idx + 1 :]:
+            left_label = PLOT_LABELS[left]
+            right_label = PLOT_LABELS[right]
+            corr = correlations.loc[left, right]
+            print(f"  {left_label} vs {right_label}: {corr:.4f}")
+
+
+def print_expected_real_returns(returns: pd.DataFrame, dataset: str) -> None:
+    arithmetic_means = returns[list(SOURCE_COLUMNS.values())].mean()
+    gross_returns = 1 + returns[list(SOURCE_COLUMNS.values())].div(100)
+    geometric_means = (gross_returns.prod() ** (1 / len(returns)) - 1) * 100
+
+    print(f"Expected real returns for {dataset}:")
+    for column in SOURCE_COLUMNS.values():
+        label = PLOT_LABELS[column]
+        arithmetic_mean = arithmetic_means.loc[column]
+        geometric_mean = geometric_means.loc[column]
+        print(
+            f"  {label}: arithmetic {arithmetic_mean:.4f}%, "
+            f"geometric {geometric_mean:.4f}%"
+        )
+
+
 def build_dataset(full_returns: pd.DataFrame, dataset: str) -> None:
     variant = get_dataset_variant(dataset)
     returns = full_returns[full_returns["year"] >= variant.start_year].copy()
-    csv_file, plot_file = get_output_paths(dataset)
+    csv_file, plot_file, density_plot_file = get_output_paths(dataset)
     csv_file.parent.mkdir(parents=True, exist_ok=True)
     returns.to_csv(csv_file, index=False)
     make_growth_plot(returns, plot_file, f"Real Growth of $1 by Asset Class: {variant.title_suffix}")
+    make_density_plot(
+        returns,
+        density_plot_file,
+        f"Density of Real Returns by Asset Class: {variant.title_suffix}",
+    )
 
     print(f"Wrote {csv_file.relative_to(ROOT)} ({len(returns)} rows)")
     print(f"Wrote {plot_file.relative_to(ROOT)}")
+    print(f"Wrote {density_plot_file.relative_to(ROOT)}")
+    print_expected_real_returns(returns, variant.label)
+    print_pairwise_correlations(returns, variant.label)
 
 
 def main() -> None:
