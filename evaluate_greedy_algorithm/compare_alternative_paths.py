@@ -13,6 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from convex_smoothing import ROOT, add_simplex_coordinates, draw_simplex_outline
 from dataset_variants import DATASET_VARIANTS, get_dataset_variant
+from evaluate_greedy_algorithm.best_run_registry import load_best_run
 from path_evaluation import evaluate_glide_path_weight_path
 from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS
@@ -357,6 +358,46 @@ def evaluate_retirement_paths(
     return pd.DataFrame(score_rows), pd.concat(yearly_rows, ignore_index=True)
 
 
+def evaluate_best_glide_run_for_plot(
+    returns: pd.DataFrame,
+    paths: np.ndarray,
+    best_run: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    if best_run is None:
+        return None
+    required_columns = {"horizon", *WEIGHT_COLUMNS}
+    if required_columns - set(best_run.columns):
+        return None
+    metrics = evaluate_glide_path_weight_path(
+        returns=returns,
+        paths=paths,
+        horizon_weight_path=best_run[["horizon", *WEIGHT_COLUMNS]],
+    )
+    return metrics[["horizon", "worst_4pct_mean"]].rename(
+        columns={"worst_4pct_mean": "yearly_score"}
+    )
+
+
+def evaluate_best_retirement_run_for_plot(
+    returns: pd.DataFrame,
+    paths: np.ndarray,
+    best_run: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    if best_run is None:
+        return None
+    required_columns = {"starting_age", *WEIGHT_COLUMNS}
+    if required_columns - set(best_run.columns):
+        return None
+    _scores, yearly = evaluate_retirement_paths(
+        returns=returns,
+        paths=paths,
+        strategies={"Best ever": best_run[["starting_age", *WEIGHT_COLUMNS]]},
+    )
+    return yearly[["starting_age", "worst_4pct_mean"]].rename(
+        columns={"worst_4pct_mean": "yearly_score"}
+    )
+
+
 def best_alternative_name(scores: pd.DataFrame) -> str:
     alternatives = scores[scores["path_name"] != GREEDY_NAME]
     return str(alternatives.sort_values("path_level_score", ascending=False).iloc[0]["path_name"])
@@ -457,6 +498,8 @@ def plot_paths_on_simplex(
 def plot_yearly_scores(
     glide_yearly: pd.DataFrame,
     retirement_yearly: pd.DataFrame,
+    best_glide_run: pd.DataFrame | None,
+    best_retirement_run: pd.DataFrame | None,
     best_glide_name: str,
     best_retirement_name: str,
     output_pdf: Path,
@@ -469,6 +512,7 @@ def plot_yearly_scores(
             "horizon",
             glide_yearly,
             best_glide_name,
+            best_glide_run,
         ),
         (
             axes[1],
@@ -476,10 +520,11 @@ def plot_yearly_scores(
             "starting_age",
             retirement_yearly,
             best_retirement_name,
+            best_retirement_run,
         ),
     ]
 
-    for ax, title, index_column, data, alternative_name in panels:
+    for ax, title, index_column, data, alternative_name, best_run in panels:
         plot_data = data[data["path_name"].isin([GREEDY_NAME, alternative_name])]
         for path_name, color, linestyle in [
             (GREEDY_NAME, "black", "-"),
@@ -493,6 +538,17 @@ def plot_yearly_scores(
                 linestyle=linestyle,
                 linewidth=2.0,
                 label=path_name,
+            )
+        if best_run is not None and {index_column, "yearly_score"} <= set(best_run.columns):
+            best_run = best_run.sort_values(index_column)
+            label = f"Best ever ({best_run['yearly_score'].mean():.4f})"
+            ax.plot(
+                best_run[index_column],
+                best_run["yearly_score"],
+                color="#1f77b4",
+                linestyle=":",
+                linewidth=2.2,
+                label=label,
             )
         ax.set_title(title, fontweight="bold")
         ax.set_xlabel(index_column.replace("_", " ").title())
@@ -561,6 +617,18 @@ def main() -> None:
 
     best_glide_name = best_alternative_name(glide_scores)
     best_retirement_name = best_alternative_name(retirement_scores)
+    best_glide_run = load_best_run("glide_path", args.dataset)
+    best_retirement_run = load_best_run("retirement", args.dataset)
+    best_glide_plot = evaluate_best_glide_run_for_plot(
+        returns=returns,
+        paths=glide_paths,
+        best_run=best_glide_run,
+    )
+    best_retirement_plot = evaluate_best_retirement_run_for_plot(
+        returns=returns,
+        paths=retirement_paths,
+        best_run=best_retirement_run,
+    )
 
     simplex_pdf = output_dir / "greedy_vs_best_alternative_simplex_paths.pdf"
     yearly_pdf = output_dir / "greedy_vs_best_alternative_yearly_scores.pdf"
@@ -576,6 +644,8 @@ def main() -> None:
     plot_yearly_scores(
         glide_yearly=glide_yearly,
         retirement_yearly=retirement_yearly,
+        best_glide_run=best_glide_plot,
+        best_retirement_run=best_retirement_plot,
         best_glide_name=best_glide_name,
         best_retirement_name=best_retirement_name,
         output_pdf=yearly_pdf,

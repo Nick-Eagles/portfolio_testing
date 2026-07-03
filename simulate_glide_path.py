@@ -9,6 +9,7 @@ from convex_smoothing import (
     add_simplex_coordinates,
 )
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from evaluate_greedy_algorithm.best_run_registry import maybe_record_best_run
 from path_simulation import (
     build_neighbor_indexes,
     lower_quantiles_in_place,
@@ -773,6 +774,31 @@ def write_outputs(
     print(f"Wrote {display_path(path_parquet)} ({len(path):,} rows)")
     print(f"Wrote {display_path(path_csv)}")
     print(f"Wrote {display_path(output_dir / 'glide_path_metadata.csv')}")
+
+    updated, current_score, previous_score, best_csv = maybe_record_best_run(
+        path=path,
+        arm="glide_path",
+        dataset=dataset,
+        index_column="horizon",
+        score_column="worst_4pct_mean",
+        settings={
+            "block_length": BLOCK_LENGTH,
+            "num_simulations": num_simulations,
+            "seed": seed,
+            "max_horizon": max_horizon,
+            "portfolio_chunk_size": portfolio_chunk_size,
+            "path_distance_lambda": path_distance_lambda,
+            "path_direction_lambda": path_direction_lambda,
+            "candidate_radius": candidate_radius,
+            "projection_steps": projection_steps,
+        },
+    )
+    prior = "none" if previous_score is None else f"{previous_score:.6f}"
+    action = "Updated" if updated else "Kept"
+    print(
+        f"{action} best glide-path registry {display_path(best_csv)} "
+        f"(current={current_score:.6f}, previous={prior})"
+    )
 
 
 def main() -> None:
