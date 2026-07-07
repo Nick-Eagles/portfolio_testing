@@ -180,17 +180,41 @@ def evaluate_candidate_weight_paths(
     if candidate_weight_paths.shape[1] != path_asset_returns.shape[1]:
         raise ValueError("candidate weights and return paths must have the same horizon.")
 
-    path_order_weights = candidate_weight_paths[:, ::-1, :]
-    simple_returns = np.einsum(
-        "nha,cha->cnh",
-        path_asset_returns,
-        path_order_weights,
-        optimize=True,
+    horizon_count = candidate_weight_paths.shape[1]
+    per_horizon_stats: dict[str, list[np.ndarray]] = {
+        "q01": [],
+        "q02": [],
+        "q10": [],
+        "median": [],
+        "mean": [],
+        "worst_4pct_mean": [],
+    }
+
+    for horizon in range(1, horizon_count + 1):
+        horizon_weights = candidate_weight_paths[:, :horizon, :][:, ::-1, :]
+        simple_returns = np.einsum(
+            "nha,cha->cnh",
+            path_asset_returns[:, :horizon, :],
+            horizon_weights,
+            optimize=True,
+        )
+        annualized_returns_by_candidate = np.exp(
+            np.log1p(simple_returns).sum(axis=2) / horizon
+        ) - 1
+        stats = summarize_outcomes(annualized_returns_by_candidate.T)
+        for column, values in stats.items():
+            per_horizon_stats[column].append(values)
+
+    summary = pd.DataFrame(
+        {
+            column: np.vstack(values).mean(axis=0)
+            for column, values in per_horizon_stats.items()
+        }
     )
-    annualized_returns_by_candidate = np.exp(
-        np.log1p(simple_returns).sum(axis=2) / candidate_weight_paths.shape[1]
-    ) - 1
-    return pd.DataFrame(summarize_outcomes(annualized_returns_by_candidate.T))
+    summary["worst_4pct_mean_sum"] = np.vstack(
+        per_horizon_stats["worst_4pct_mean"]
+    ).sum(axis=0)
+    return summary
 
 
 def best_row(summary: pd.DataFrame) -> pd.Series:
@@ -319,7 +343,7 @@ def path_rows(
                 "bisection_level": bisection_level,
                 "radius_pass": radius_pass,
                 "adjusted_horizon": adjusted_horizon,
-                "full_path_worst_4pct_mean": score,
+                "path_mean_worst_4pct_mean": score,
                 "horizon": horizon,
                 "stock_weight": weights[0],
                 "bond_weight": weights[1],
@@ -587,7 +611,10 @@ def write_metadata(
             ("radius_passes", radius_passes),
             ("radius_fraction", radius_fraction),
             ("candidate_chunk_size", candidate_chunk_size),
-            ("optimization_objective", "mean of worst 4% full-path annualized outcomes"),
+            (
+                "optimization_objective",
+                "mean across horizons of each horizon's worst 4% mean annualized outcome",
+            ),
             ("quantile_interpolation", "lower"),
             ("horizon_1_anchor", "exact empirical one-year objective across observed years"),
             ("path_shape", "piecewise linear in simplex/portfolio weight space"),
