@@ -28,9 +28,11 @@ DEFAULT_CANDIDATE_CHUNK_SIZE = 25
 DEFAULT_BISECTIONS = 4
 DEFAULT_RADIUS_PASSES = 3
 DEFAULT_HEX_RADIUS_RATIO = 0.5
+DEFAULT_LOCAL_OBJECTIVE = "full_path"
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 WORST_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
+LOCAL_OBJECTIVES = ("full_path", "through_adjusted_horizon")
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,6 +100,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_CANDIDATE_CHUNK_SIZE,
         help="Number of full candidate paths to evaluate at once.",
+    )
+    parser.add_argument(
+        "--local-objective",
+        choices=LOCAL_OBJECTIVES,
+        default=DEFAULT_LOCAL_OBJECTIVE,
+        help=(
+            "Objective used for local hex searches. full_path scores every tweak over all "
+            "horizons; through_adjusted_horizon scores a tweak at horizon H over horizons 1-H."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -179,6 +190,7 @@ def summarize_outcomes(values: np.ndarray) -> dict[str, np.ndarray]:
 def evaluate_candidate_weight_paths(
     path_asset_returns: np.ndarray,
     candidate_weight_paths: np.ndarray,
+    aggregate_horizon_count: int | None = None,
 ) -> pd.DataFrame:
     if candidate_weight_paths.ndim != 3:
         raise ValueError("candidate_weight_paths must have shape candidates x horizons x assets.")
@@ -186,6 +198,11 @@ def evaluate_candidate_weight_paths(
         raise ValueError("candidate weights and return paths must have the same horizon.")
 
     horizon_count = candidate_weight_paths.shape[1]
+    if aggregate_horizon_count is None:
+        aggregate_horizon_count = horizon_count
+    if aggregate_horizon_count < 1 or aggregate_horizon_count > horizon_count:
+        raise ValueError("aggregate_horizon_count must be between 1 and the path horizon.")
+
     per_horizon_stats: dict[str, list[np.ndarray]] = {
         "q01": [],
         "q02": [],
@@ -195,7 +212,7 @@ def evaluate_candidate_weight_paths(
         "worst_4pct_mean": [],
     }
 
-    for horizon in range(1, horizon_count + 1):
+    for horizon in range(1, aggregate_horizon_count + 1):
         horizon_weights = candidate_weight_paths[:, :horizon, :][:, ::-1, :]
         simple_returns = np.einsum(
             "nha,cha->cnh",
@@ -335,6 +352,7 @@ def path_rows(
     snapshot_index: int,
     phase: str,
     score: float,
+    score_horizon_count: int,
     bisection_level: int | None,
     radius_pass: int | None,
     adjusted_horizon: int | None,
@@ -348,6 +366,7 @@ def path_rows(
                 "bisection_level": bisection_level,
                 "radius_pass": radius_pass,
                 "adjusted_horizon": adjusted_horizon,
+                "score_horizon_count": score_horizon_count,
                 "path_mean_worst_4pct_mean": score,
                 "horizon": horizon,
                 "stock_weight": weights[0],
@@ -362,11 +381,18 @@ def evaluate_paths_in_chunks(
     path_asset_returns: np.ndarray,
     candidate_weight_paths: np.ndarray,
     candidate_chunk_size: int,
+    aggregate_horizon_count: int | None = None,
 ) -> pd.DataFrame:
     chunks = []
     for start in range(0, len(candidate_weight_paths), candidate_chunk_size):
         stop = min(start + candidate_chunk_size, len(candidate_weight_paths))
-        chunks.append(evaluate_candidate_weight_paths(path_asset_returns, candidate_weight_paths[start:stop]))
+        chunks.append(
+            evaluate_candidate_weight_paths(
+                path_asset_returns,
+                candidate_weight_paths[start:stop],
+                aggregate_horizon_count=aggregate_horizon_count,
+            )
+        )
     return pd.concat(chunks, ignore_index=True)
 
 
@@ -405,6 +431,7 @@ def build_bisected_glide_path(
     bisections: int,
     radius_passes: int,
     hex_radius_ratio: float,
+    local_objective: str,
     candidate_chunk_size: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
@@ -419,6 +446,8 @@ def build_bisected_glide_path(
         raise ValueError("radius_passes must be at least 1.")
     if hex_radius_ratio < 0:
         raise ValueError("hex_radius_ratio must be non-negative.")
+    if local_objective not in LOCAL_OBJECTIVES:
+        raise ValueError(f"local_objective must be one of: {', '.join(LOCAL_OBJECTIVES)}.")
     if candidate_chunk_size < 1:
         raise ValueError("candidate_chunk_size must be at least 1.")
 
@@ -462,6 +491,7 @@ def build_bisected_glide_path(
             snapshot_index=snapshot_index,
             phase="initialize_horizon_max",
             score=current_score,
+            score_horizon_count=max_horizon,
             bisection_level=0,
             radius_pass=None,
             adjusted_horizon=max_horizon,
@@ -510,10 +540,16 @@ def build_bisected_glide_path(
                     candidate_weights=candidates,
                     max_horizon=max_horizon,
                 )
+                score_horizon_count = (
+                    max_horizon
+                    if local_objective == "full_path"
+                    else horizon
+                )
                 summary = evaluate_paths_in_chunks(
                     path_asset_returns=path_asset_returns,
                     candidate_weight_paths=candidate_paths,
                     candidate_chunk_size=candidate_chunk_size,
+                    aggregate_horizon_count=score_horizon_count,
                 )
                 candidate_frame = pd.DataFrame(candidates, columns=WEIGHT_COLUMNS)
                 candidate_frame = pd.concat([candidate_frame, summary], axis=1)
@@ -521,6 +557,7 @@ def build_bisected_glide_path(
                 candidate_frame["bisection_level"] = bisection_level
                 candidate_frame["radius_pass"] = radius_pass + 1
                 candidate_frame["adjusted_horizon"] = horizon
+                candidate_frame["score_horizon_count"] = score_horizon_count
                 candidate_frame["hex_radius"] = radius
                 candidate_frame["candidate_count_after_dedupe"] = len(candidates)
                 selected = best_row(candidate_frame)
@@ -538,6 +575,7 @@ def build_bisected_glide_path(
                         snapshot_index=snapshot_index,
                         phase="local_hex_refine",
                         score=current_score,
+                        score_horizon_count=score_horizon_count,
                         bisection_level=bisection_level,
                         radius_pass=radius_pass + 1,
                         adjusted_horizon=horizon,
@@ -602,6 +640,7 @@ def write_metadata(
     bisections: int,
     radius_passes: int,
     hex_radius_ratio: float,
+    local_objective: str,
     candidate_chunk_size: int,
 ) -> None:
     metadata = pd.DataFrame(
@@ -615,6 +654,7 @@ def write_metadata(
             ("bisections", bisections),
             ("radius_passes", radius_passes),
             ("hex_radius_ratio", hex_radius_ratio),
+            ("local_objective", local_objective),
             ("candidate_chunk_size", candidate_chunk_size),
             (
                 "optimization_objective",
@@ -648,6 +688,7 @@ def write_outputs(
     bisections: int,
     radius_passes: int,
     hex_radius_ratio: float,
+    local_objective: str,
     candidate_chunk_size: int,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -681,6 +722,7 @@ def write_outputs(
         bisections=bisections,
         radius_passes=radius_passes,
         hex_radius_ratio=hex_radius_ratio,
+        local_objective=local_objective,
         candidate_chunk_size=candidate_chunk_size,
     )
     print(f"Wrote {display_path(output_dir / 'bisected_glide_path_metadata.csv')}")
@@ -700,6 +742,7 @@ def main() -> None:
         bisections=args.bisections,
         radius_passes=args.radius_passes,
         hex_radius_ratio=args.hex_radius_ratio,
+        local_objective=args.local_objective,
         candidate_chunk_size=args.candidate_chunk_size,
     )
     write_outputs(
@@ -716,6 +759,7 @@ def main() -> None:
         bisections=args.bisections,
         radius_passes=args.radius_passes,
         hex_radius_ratio=args.hex_radius_ratio,
+        local_objective=args.local_objective,
         candidate_chunk_size=args.candidate_chunk_size,
     )
 
