@@ -27,7 +27,7 @@ DEFAULT_ENDPOINT_GRID_STEP = 0.05
 DEFAULT_CANDIDATE_CHUNK_SIZE = 25
 DEFAULT_BISECTIONS = 4
 DEFAULT_RADIUS_PASSES = 3
-DEFAULT_RADIUS_FRACTION = 0.25
+DEFAULT_HEX_RADIUS_RATIO = 0.5
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 WORST_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
@@ -83,10 +83,15 @@ def parse_args() -> argparse.Namespace:
         help="Shrinking-radius coordinate-descent passes per bisection round.",
     )
     parser.add_argument(
+        "--hex-radius-ratio",
         "--radius-fraction",
+        dest="hex_radius_ratio",
         type=float,
-        default=DEFAULT_RADIUS_FRACTION,
-        help="Initial hex radius as a fraction of each control point's local simplex span.",
+        default=DEFAULT_HEX_RADIUS_RATIO,
+        help=(
+            "Initial hex radius as a fraction of each control point's local simplex span. "
+            "The older --radius-fraction spelling is kept as an alias."
+        ),
     )
     parser.add_argument(
         "--candidate-chunk-size",
@@ -399,7 +404,7 @@ def build_bisected_glide_path(
     endpoint_grid_step: float,
     bisections: int,
     radius_passes: int,
-    radius_fraction: float,
+    hex_radius_ratio: float,
     candidate_chunk_size: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
@@ -412,8 +417,8 @@ def build_bisected_glide_path(
         raise ValueError("bisections must be non-negative.")
     if radius_passes < 1:
         raise ValueError("radius_passes must be at least 1.")
-    if radius_fraction < 0:
-        raise ValueError("radius_fraction must be non-negative.")
+    if hex_radius_ratio < 0:
+        raise ValueError("hex_radius_ratio must be non-negative.")
     if candidate_chunk_size < 1:
         raise ValueError("candidate_chunk_size must be at least 1.")
 
@@ -485,7 +490,7 @@ def build_bisected_glide_path(
 
         adjustable_horizons = [horizon for horizon in sorted(control_points) if horizon != 1]
         base_radii = {
-            horizon: radius_fraction * local_span(control_points, horizon, max_horizon)
+            horizon: hex_radius_ratio * local_span(control_points, horizon, max_horizon)
             for horizon in adjustable_horizons
         }
 
@@ -596,7 +601,7 @@ def write_metadata(
     endpoint_grid_step: float,
     bisections: int,
     radius_passes: int,
-    radius_fraction: float,
+    hex_radius_ratio: float,
     candidate_chunk_size: int,
 ) -> None:
     metadata = pd.DataFrame(
@@ -609,7 +614,7 @@ def write_metadata(
             ("endpoint_grid_step", endpoint_grid_step),
             ("bisections", bisections),
             ("radius_passes", radius_passes),
-            ("radius_fraction", radius_fraction),
+            ("hex_radius_ratio", hex_radius_ratio),
             ("candidate_chunk_size", candidate_chunk_size),
             (
                 "optimization_objective",
@@ -642,7 +647,7 @@ def write_outputs(
     endpoint_grid_step: float,
     bisections: int,
     radius_passes: int,
-    radius_fraction: float,
+    hex_radius_ratio: float,
     candidate_chunk_size: int,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -675,7 +680,7 @@ def write_outputs(
         endpoint_grid_step=endpoint_grid_step,
         bisections=bisections,
         radius_passes=radius_passes,
-        radius_fraction=radius_fraction,
+        hex_radius_ratio=hex_radius_ratio,
         candidate_chunk_size=candidate_chunk_size,
     )
     print(f"Wrote {display_path(output_dir / 'bisected_glide_path_metadata.csv')}")
@@ -694,7 +699,7 @@ def main() -> None:
         endpoint_grid_step=args.endpoint_grid_step,
         bisections=args.bisections,
         radius_passes=args.radius_passes,
-        radius_fraction=args.radius_fraction,
+        hex_radius_ratio=args.hex_radius_ratio,
         candidate_chunk_size=args.candidate_chunk_size,
     )
     write_outputs(
@@ -710,7 +715,7 @@ def main() -> None:
         endpoint_grid_step=args.endpoint_grid_step,
         bisections=args.bisections,
         radius_passes=args.radius_passes,
-        radius_fraction=args.radius_fraction,
+        hex_radius_ratio=args.hex_radius_ratio,
         candidate_chunk_size=args.candidate_chunk_size,
     )
 
