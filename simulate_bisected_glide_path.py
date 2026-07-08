@@ -28,6 +28,7 @@ DEFAULT_CANDIDATE_CHUNK_SIZE = 25
 DEFAULT_BISECTIONS = 4
 DEFAULT_RADIUS_PASSES = 3
 DEFAULT_HEX_RADIUS_RATIO = 0.5
+DEFAULT_HEX_STEPS = 1
 DEFAULT_LOCAL_OBJECTIVE = "full_path"
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 WORST_TAIL_FRACTION = 0.04
@@ -93,6 +94,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Initial hex radius as a fraction of each control point's local simplex span. "
             "The older --radius-fraction spelling is kept as an alias."
+        ),
+    )
+    parser.add_argument(
+        "--hex-steps",
+        type=int,
+        default=DEFAULT_HEX_STEPS,
+        help=(
+            "Number of triangular-lattice steps in the local hex search. "
+            "1 gives center + 6 points; 2 gives center + 6 inner + 12 outer points."
         ),
     )
     parser.add_argument(
@@ -311,15 +321,30 @@ def clean_weight_path(weight_path: np.ndarray) -> np.ndarray:
     return cleaned / row_sums[:, None]
 
 
-def hex_candidate_weights(center_weights: np.ndarray, radius: float) -> np.ndarray:
+def hex_lattice_offsets(radius: float, steps: int) -> np.ndarray:
+    if steps < 1:
+        raise ValueError("hex_steps must be at least 1.")
+    spacing = radius / steps
+    basis_q = np.array([1.0, 0.0])
+    basis_r = np.array([0.5, math.sqrt(3) / 2])
+    offsets = []
+    for q in range(-steps, steps + 1):
+        for r in range(-steps, steps + 1):
+            s = -q - r
+            if max(abs(q), abs(r), abs(s)) <= steps:
+                offsets.append(spacing * (q * basis_q + r * basis_r))
+    offsets_array = np.array(offsets, dtype=float)
+    distances = np.linalg.norm(offsets_array, axis=1)
+    return offsets_array[np.argsort(distances)]
+
+
+def hex_candidate_weights(center_weights: np.ndarray, radius: float, steps: int) -> np.ndarray:
     center_weights = np.asarray(center_weights, dtype=float)
     if radius <= 1e-12:
         return center_weights.reshape(1, 3)
 
     center_xy = simplex_xy_from_weights(center_weights)
-    angles = np.arange(6) * (math.pi / 3)
-    ring = np.stack([np.cos(angles), np.sin(angles)], axis=1) * radius
-    xy_candidates = np.vstack([center_xy, center_xy + ring])
+    xy_candidates = center_xy + hex_lattice_offsets(radius, steps)
     raw_weights = weights_from_simplex_xy(xy_candidates)
     projected = project_rows_to_simplex(raw_weights)
     return dedupe_weights(projected)
@@ -431,6 +456,7 @@ def build_bisected_glide_path(
     bisections: int,
     radius_passes: int,
     hex_radius_ratio: float,
+    hex_steps: int,
     local_objective: str,
     candidate_chunk_size: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -446,6 +472,8 @@ def build_bisected_glide_path(
         raise ValueError("radius_passes must be at least 1.")
     if hex_radius_ratio < 0:
         raise ValueError("hex_radius_ratio must be non-negative.")
+    if hex_steps < 1:
+        raise ValueError("hex_steps must be at least 1.")
     if local_objective not in LOCAL_OBJECTIVES:
         raise ValueError(f"local_objective must be one of: {', '.join(LOCAL_OBJECTIVES)}.")
     if candidate_chunk_size < 1:
@@ -533,7 +561,7 @@ def build_bisected_glide_path(
             radius_scale = 0.5 ** radius_pass
             for horizon in adjustable_horizons:
                 radius = base_radii[horizon] * radius_scale
-                candidates = hex_candidate_weights(control_points[horizon], radius)
+                candidates = hex_candidate_weights(control_points[horizon], radius, hex_steps)
                 candidate_paths = candidate_paths_for_control_update(
                     control_points=control_points,
                     horizon=horizon,
@@ -558,6 +586,7 @@ def build_bisected_glide_path(
                 candidate_frame["radius_pass"] = radius_pass + 1
                 candidate_frame["adjusted_horizon"] = horizon
                 candidate_frame["score_horizon_count"] = score_horizon_count
+                candidate_frame["hex_steps"] = hex_steps
                 candidate_frame["hex_radius"] = radius
                 candidate_frame["candidate_count_after_dedupe"] = len(candidates)
                 selected = best_row(candidate_frame)
@@ -640,6 +669,7 @@ def write_metadata(
     bisections: int,
     radius_passes: int,
     hex_radius_ratio: float,
+    hex_steps: int,
     local_objective: str,
     candidate_chunk_size: int,
 ) -> None:
@@ -654,6 +684,7 @@ def write_metadata(
             ("bisections", bisections),
             ("radius_passes", radius_passes),
             ("hex_radius_ratio", hex_radius_ratio),
+            ("hex_steps", hex_steps),
             ("local_objective", local_objective),
             ("candidate_chunk_size", candidate_chunk_size),
             (
@@ -688,6 +719,7 @@ def write_outputs(
     bisections: int,
     radius_passes: int,
     hex_radius_ratio: float,
+    hex_steps: int,
     local_objective: str,
     candidate_chunk_size: int,
 ) -> None:
@@ -722,6 +754,7 @@ def write_outputs(
         bisections=bisections,
         radius_passes=radius_passes,
         hex_radius_ratio=hex_radius_ratio,
+        hex_steps=hex_steps,
         local_objective=local_objective,
         candidate_chunk_size=candidate_chunk_size,
     )
@@ -742,6 +775,7 @@ def main() -> None:
         bisections=args.bisections,
         radius_passes=args.radius_passes,
         hex_radius_ratio=args.hex_radius_ratio,
+        hex_steps=args.hex_steps,
         local_objective=args.local_objective,
         candidate_chunk_size=args.candidate_chunk_size,
     )
@@ -759,6 +793,7 @@ def main() -> None:
         bisections=args.bisections,
         radius_passes=args.radius_passes,
         hex_radius_ratio=args.hex_radius_ratio,
+        hex_steps=args.hex_steps,
         local_objective=args.local_objective,
         candidate_chunk_size=args.candidate_chunk_size,
     )
