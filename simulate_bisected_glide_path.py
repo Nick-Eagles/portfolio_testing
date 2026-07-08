@@ -30,6 +30,7 @@ DEFAULT_RADIUS_PASSES = 3
 DEFAULT_HEX_RADIUS_RATIO = 0.5
 DEFAULT_HEX_STEPS = 1
 DEFAULT_LOCAL_OBJECTIVE = "full_path"
+DEFAULT_PATH_LENGTH_PENALTY = 0.0005
 QUANTILES = (0.01, 0.02, 0.10, 0.50)
 WORST_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
@@ -118,6 +119,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Objective used for local hex searches. full_path scores every tweak over all "
             "horizons; through_adjusted_horizon scores a tweak at horizon H over horizons 1-H."
+        ),
+    )
+    parser.add_argument(
+        "--path-length-penalty",
+        type=float,
+        default=DEFAULT_PATH_LENGTH_PENALTY,
+        help=(
+            "Penalty coefficient subtracted from local candidate scores per unit of total "
+            "simplex-coordinate path length."
         ),
     )
     parser.add_argument(
@@ -250,8 +260,10 @@ def evaluate_candidate_weight_paths(
 
 
 def best_row(summary: pd.DataFrame) -> pd.Series:
+    score_column = "objective_score" if "objective_score" in summary.columns else "worst_4pct_mean"
     return summary.sort_values(
         [
+            score_column,
             "worst_4pct_mean",
             "q02",
             "mean",
@@ -259,7 +271,7 @@ def best_row(summary: pd.DataFrame) -> pd.Series:
             "bond_weight",
             "t_bill_weight",
         ],
-        ascending=[False, False, False, True, True, True],
+        ascending=[False, False, False, False, True, True, True],
     ).iloc[0]
 
 
@@ -306,6 +318,12 @@ def candidate_paths_for_control_update(
         updated[horizon] = weights
         paths[index] = interpolate_control_points(updated, max_horizon)
     return paths
+
+
+def path_lengths(weight_paths: np.ndarray) -> np.ndarray:
+    simplex_paths = simplex_xy_from_weights(weight_paths)
+    step_vectors = np.diff(simplex_paths, axis=1)
+    return np.linalg.norm(step_vectors, axis=2).sum(axis=1)
 
 
 def dedupe_weights(weights: np.ndarray) -> np.ndarray:
@@ -458,6 +476,7 @@ def build_bisected_glide_path(
     hex_radius_ratio: float,
     hex_steps: int,
     local_objective: str,
+    path_length_penalty: float,
     candidate_chunk_size: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if num_simulations < 1:
@@ -476,6 +495,8 @@ def build_bisected_glide_path(
         raise ValueError("hex_steps must be at least 1.")
     if local_objective not in LOCAL_OBJECTIVES:
         raise ValueError(f"local_objective must be one of: {', '.join(LOCAL_OBJECTIVES)}.")
+    if path_length_penalty < 0:
+        raise ValueError("path_length_penalty must be non-negative.")
     if candidate_chunk_size < 1:
         raise ValueError("candidate_chunk_size must be at least 1.")
 
@@ -581,6 +602,12 @@ def build_bisected_glide_path(
                 )
                 candidate_frame = pd.DataFrame(candidates, columns=WEIGHT_COLUMNS)
                 candidate_frame = pd.concat([candidate_frame, summary], axis=1)
+                candidate_frame["path_length"] = path_lengths(candidate_paths)
+                candidate_frame["path_length_penalty"] = path_length_penalty
+                candidate_frame["objective_score"] = (
+                    candidate_frame["worst_4pct_mean"]
+                    - path_length_penalty * candidate_frame["path_length"]
+                )
                 candidate_frame["phase"] = "local_hex_refine"
                 candidate_frame["bisection_level"] = bisection_level
                 candidate_frame["radius_pass"] = radius_pass + 1
@@ -592,6 +619,7 @@ def build_bisected_glide_path(
                 selected = best_row(candidate_frame)
                 control_points[horizon] = selected[WEIGHT_COLUMNS].to_numpy(dtype=float)
                 current_score = float(selected["worst_4pct_mean"])
+                current_objective_score = float(selected["objective_score"])
                 candidate_frame["is_selected"] = False
                 candidate_frame.loc[selected.name, "is_selected"] = True
                 candidate_rows.append(candidate_frame)
@@ -614,7 +642,7 @@ def build_bisected_glide_path(
                     "  "
                     f"pass {radius_pass + 1}, horizon {horizon}: "
                     f"radius={radius:.4f}, candidates={len(candidates)}, "
-                    f"score={current_score:.5f}",
+                    f"score={current_score:.5f}, objective={current_objective_score:.5f}",
                     flush=True,
                 )
 
@@ -630,6 +658,9 @@ def build_bisected_glide_path(
     final["num_simulations"] = num_simulations
     for column, value in final_stats.items():
         final[column] = float(value)
+    final["path_length"] = float(path_lengths(final_path.reshape(1, max_horizon, 3))[0])
+    final["path_length_penalty"] = path_length_penalty
+    final["objective_score"] = final["worst_4pct_mean"] - path_length_penalty * final["path_length"]
 
     control_frame = pd.DataFrame(
         [
@@ -671,6 +702,7 @@ def write_metadata(
     hex_radius_ratio: float,
     hex_steps: int,
     local_objective: str,
+    path_length_penalty: float,
     candidate_chunk_size: int,
 ) -> None:
     metadata = pd.DataFrame(
@@ -686,6 +718,7 @@ def write_metadata(
             ("hex_radius_ratio", hex_radius_ratio),
             ("hex_steps", hex_steps),
             ("local_objective", local_objective),
+            ("path_length_penalty", path_length_penalty),
             ("candidate_chunk_size", candidate_chunk_size),
             (
                 "optimization_objective",
@@ -721,6 +754,7 @@ def write_outputs(
     hex_radius_ratio: float,
     hex_steps: int,
     local_objective: str,
+    path_length_penalty: float,
     candidate_chunk_size: int,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -756,6 +790,7 @@ def write_outputs(
         hex_radius_ratio=hex_radius_ratio,
         hex_steps=hex_steps,
         local_objective=local_objective,
+        path_length_penalty=path_length_penalty,
         candidate_chunk_size=candidate_chunk_size,
     )
     print(f"Wrote {display_path(output_dir / 'bisected_glide_path_metadata.csv')}")
@@ -777,6 +812,7 @@ def main() -> None:
         hex_radius_ratio=args.hex_radius_ratio,
         hex_steps=args.hex_steps,
         local_objective=args.local_objective,
+        path_length_penalty=args.path_length_penalty,
         candidate_chunk_size=args.candidate_chunk_size,
     )
     write_outputs(
@@ -795,6 +831,7 @@ def main() -> None:
         hex_radius_ratio=args.hex_radius_ratio,
         hex_steps=args.hex_steps,
         local_objective=args.local_objective,
+        path_length_penalty=args.path_length_penalty,
         candidate_chunk_size=args.candidate_chunk_size,
     )
 
