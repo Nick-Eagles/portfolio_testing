@@ -85,6 +85,8 @@ Primary scripts:
 
 - `simulate_glide_path.py`
 - `plot_glide_path.py`
+- `simulate_bisected_glide_path.py`
+- `plot_bisected_glide_path.py`
 
 Primary outputs:
 
@@ -103,6 +105,7 @@ Important context:
 - After horizon 1, the main glide path script limits candidates to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio. The default candidate radius is `0.10`.
 - The current main glide path script uses same-direction/same-distance projected continuation when scoring candidates. The default is `4` projection steps. Projected weights are projected back to the simplex and snapped to the nearest grid portfolio.
 - Portfolio smoothing was removed from the glide path arm because it is no longer practical with neighborhood-limited candidate search, and the `worst_4pct_mean` surfaces did not show local cross-portfolio spikes that needed smoothing even with lookahead.
+- There is also a newer experimental alternative to the greedy glide-path algorithm. It optimizes a piecewise-linear path by repeatedly bisecting control points, testing local hexagonal candidate lattices, and scoring full path outcomes. Treat this as a research experiment, not as the replacement for the main glide-path script.
 
 ## Retirement Component
 

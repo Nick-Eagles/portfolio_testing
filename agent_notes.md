@@ -148,6 +148,45 @@ Current glide path outputs include:
 - `plots/<dataset>/glide_path/glide_path.pdf`
 - `plots/<dataset>/glide_path/glide_path_expected_returns.pdf`
 
+### Experimental Bisected Glide Path Optimizer
+
+A newer experimental alternative to the greedy glide path algorithm was added in:
+
+- `simulate_bisected_glide_path.py`
+- `plot_bisected_glide_path.py`
+
+This should not be treated as the settled replacement for `simulate_glide_path.py`. It is a research branch testing whether path-level optimization can produce a cleaner and more believable glide path than greedy horizon-by-horizon selection.
+
+Conceptual design:
+
+- Horizon 1 is still fixed using the exact empirical one-year `worst_4pct_mean` anchor.
+- Horizon 50 is initialized by searching a coarse full-simplex grid, with intermediate horizons linearly spaced between horizon 1 and horizon 50.
+- The path is then refined by iterative bisection. Each bisection inserts midpoint control horizons, then locally searches around control points in simplex-coordinate space.
+- Full paths are piecewise linear between control points.
+- Local candidates are evaluated against the mean, across horizons 1-50, of each horizon's `worst_4pct_mean`. This was chosen after an initial terminal-50-only objective was judged conceptually wrong because it could over-optimize distant horizons while ignoring shorter-horizon risk.
+- The script can still run a local `through_adjusted_horizon` objective, but clean comparison runs suggested it performed worse than scoring every tweak over the full 1-50 horizon set.
+
+Experiments tried so far:
+
+- Initial bisection used a 7-point local hex search: center plus six neighbors, with three shrinking-radius passes.
+- The hex radius ratio was made configurable with `--hex-radius-ratio`; a run at `0.3` was slightly better than the earlier `0.5` run.
+- A mode that adjusted only newly inserted bisection points, while keeping older control points fixed, was tried and reverted. It performed worse and left horizon 50 pinned too strongly to its coarse-grid initialization.
+- A 2-step hex lattice was added with `--hex-steps 2`: center + 6 inner points + 12 outer points, with the configured radius referring to the outer lattice scale. Near simplex edges, projection can deduplicate candidates, so fewer than 19 rows may be evaluated.
+- A one-pass 2-step hex run with `--hex-steps 2 --radius-passes 1 --hex-radius-ratio 0.5` was very close to the older 1-step/3-pass result, but slightly worse on the raw objective.
+- A path-length regularizer was added with `--path-length-penalty`. The default is currently `0.0005`, intended as a mild tie-breaker toward shorter/smoother simplex paths. Candidate summaries include raw score, `path_length`, `path_length_penalty`, and `objective_score`. Final reported return stats remain raw; `objective_score` is separate.
+
+Plotting diagnostics:
+
+- `plot_bisected_glide_path.py` writes plots under `plots/<dataset>/glide_path_bisection/` by default.
+- It includes a 2x2 simplex grid showing the path after each outer iteration.
+- It includes a score trace after every local tweak.
+- It includes a per-horizon line plot comparing individual horizon scores at the end of each outer iteration. This was added because later iterations appeared to improve long horizons while sometimes hurting short horizons such as horizon 5.
+- It includes a hex-lattice diagnostic, usually focused on bisection level 2, showing projected local search candidates colored by radius pass.
+
+Current caution:
+
+The bisected optimizer is still experimental and may not be the final algorithm. It is useful for studying path-level behavior and regularization, but its objective, local search geometry, and regularization strength are still being tuned.
+
 ## Convergence Diagnostics
 
 `q02_diff_density.py` is no longer just about `q02`. It was extended to support the glide path arm and the newer downside metric as well. Recent work used it with no smoothing or regularization to compare checkpoint runs against the larger reference run.
