@@ -11,10 +11,10 @@ from convex_smoothing import (
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from evaluate_greedy_algorithm.best_run_registry import maybe_record_best_run
 from path_simulation import (
-    build_neighbor_indexes,
+    interpolated_weights_for_steps,
     lower_quantiles_in_place,
     mean_of_worst_tail_fraction,
-    projected_weight_indexes_for_steps,
+    nearest_portfolio_indexes,
     zscore_values,
 )
 from portfolio_helpers import MAX_HORIZON, RETURN_COLUMNS, generate_portfolio_weights
@@ -108,8 +108,9 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_PROJECTION_STEPS,
         help=(
-            "Number of same-distance, same-direction longer-horizon projection steps "
-            "used when scoring candidates. Horizon 1 uses no projection."
+            "Number of look-ahead steps used when scoring candidates. Horizon 1 uses "
+            "no look-ahead; later horizons search for the H+N endpoint and commit only "
+            "the interpolated first step."
         ),
     )
     parser.add_argument(
@@ -269,41 +270,42 @@ def summarize_glidepath_horizon(
     horizon: int,
     paths: np.ndarray,
     asset_returns: np.ndarray,
-    weights: pd.DataFrame,
-    weight_matrix: np.ndarray,
-    candidate_indexes: np.ndarray,
-    selected_weight_indexes: dict[int, int],
+    candidate_weights: pd.DataFrame,
+    candidate_weight_matrix: np.ndarray,
+    candidate_nearest_indexes: np.ndarray,
+    selected_weights: dict[int, np.ndarray],
     portfolio_chunk_size: int,
     checkpoint_levels: tuple[int, ...],
 ) -> tuple[pd.DataFrame, dict[int, pd.DataFrame]]:
     suffix_log_growth = np.zeros(paths.shape[0], dtype=float)
     for year_offset in range(1, horizon):
         years_remaining_after_offset = horizon - year_offset
-        selected_index = selected_weight_indexes[years_remaining_after_offset]
-        selected_returns = asset_returns[paths[:, year_offset]] @ weight_matrix[selected_index]
+        selected_returns = (
+            asset_returns[paths[:, year_offset]]
+            @ selected_weights[years_remaining_after_offset]
+        )
         suffix_log_growth += np.log1p(selected_returns)
 
     chunks = []
     checkpoint_chunks: dict[int, list[pd.DataFrame]] = {
         checkpoint: [] for checkpoint in checkpoint_levels
     }
-    for start in range(0, len(candidate_indexes), portfolio_chunk_size):
-        stop = min(start + portfolio_chunk_size, len(candidate_indexes))
-        chunk_indexes = candidate_indexes[start:stop]
-        first_year_returns = asset_returns[paths[:, 0]] @ weight_matrix[chunk_indexes].T
+    for start in range(0, len(candidate_weights), portfolio_chunk_size):
+        stop = min(start + portfolio_chunk_size, len(candidate_weights))
+        first_year_returns = asset_returns[paths[:, 0]] @ candidate_weight_matrix[start:stop].T
         terminal_log_growth = np.log1p(first_year_returns) + suffix_log_growth[:, None]
         annualized_returns = np.exp(terminal_log_growth / horizon) - 1
         chunks.append(
-            summarize_candidates(weights.iloc[chunk_indexes], annualized_returns).assign(
-                selected_weight_index=chunk_indexes
+            summarize_candidates(candidate_weights.iloc[start:stop], annualized_returns).assign(
+                selected_weight_index=candidate_nearest_indexes[start:stop]
             )
         )
         for checkpoint in checkpoint_levels:
             checkpoint_chunks[checkpoint].append(
                 summarize_candidates(
-                    weights.iloc[chunk_indexes],
+                    candidate_weights.iloc[start:stop],
                     annualized_returns[:checkpoint],
-                ).assign(selected_weight_index=chunk_indexes)
+                ).assign(selected_weight_index=candidate_nearest_indexes[start:stop])
             )
 
     checkpoint_summaries = {
@@ -319,7 +321,7 @@ def summarize_projected_continuation(
     asset_returns: np.ndarray,
     weight_matrix: np.ndarray,
     candidate_indexes: np.ndarray,
-    selected_weight_indexes: dict[int, int],
+    selected_weights: dict[int, np.ndarray],
     previous_selected: pd.Series | None,
     portfolio_chunk_size: int,
     projection_steps: int,
@@ -337,52 +339,47 @@ def summarize_projected_continuation(
         ],
         dtype=float,
     )
-    projected_weight_indexes_by_step = projected_weight_indexes_for_steps(
+    interpolation_steps = projection_steps + 1
+    interpolated_weights_by_step = interpolated_weights_for_steps(
         previous_weights=previous_weights,
-        candidate_weights=weight_matrix[candidate_indexes],
-        weight_matrix=weight_matrix,
-        projection_steps=projection_steps,
-        portfolio_chunk_size=portfolio_chunk_size,
+        endpoint_weights=weight_matrix[candidate_indexes],
+        interpolation_steps=interpolation_steps,
     )
 
     suffix_log_growth = np.zeros(paths.shape[0], dtype=float)
     projected_horizon = horizon + projection_steps
-    for year_offset in range(projection_steps + 1, projected_horizon):
+    for year_offset in range(interpolation_steps, projected_horizon):
         years_remaining_after_offset = projected_horizon - year_offset
-        selected_index = selected_weight_indexes[years_remaining_after_offset]
-        selected_returns = asset_returns[paths[:, year_offset]] @ weight_matrix[selected_index]
+        selected_returns = (
+            asset_returns[paths[:, year_offset]]
+            @ selected_weights[years_remaining_after_offset]
+        )
         suffix_log_growth += np.log1p(selected_returns)
 
     chunks = []
     for start in range(0, len(candidate_indexes), portfolio_chunk_size):
         stop = min(start + portfolio_chunk_size, len(candidate_indexes))
         chunk_indexes = candidate_indexes[start:stop]
-        candidate_returns = asset_returns[paths[:, projection_steps]] @ weight_matrix[
-            chunk_indexes
-        ].T
-        terminal_log_growth = np.log1p(candidate_returns) + suffix_log_growth[:, None]
+        terminal_log_growth = np.broadcast_to(
+            suffix_log_growth[:, None],
+            (paths.shape[0], len(chunk_indexes)),
+        ).copy()
 
-        for projected_offset in range(projection_steps):
-            step_indexes = projected_weight_indexes_by_step[
-                projection_steps - projected_offset - 1
-            ][start:stop]
-            projected_returns = asset_returns[paths[:, projected_offset]] @ weight_matrix[
-                step_indexes
-            ].T
-            terminal_log_growth += np.log1p(projected_returns)
+        for projected_offset in range(interpolation_steps):
+            step_weights = interpolated_weights_by_step[projection_steps - projected_offset][
+                start:stop
+            ]
+            step_returns = asset_returns[paths[:, projected_offset]] @ step_weights.T
+            terminal_log_growth += np.log1p(step_returns)
 
         annualized_returns = np.exp(terminal_log_growth / projected_horizon) - 1
         stats = summarize_annualized_returns(annualized_returns)
-        if projection_steps == 0:
-            chunk_projected_weight_indexes = chunk_indexes
-        else:
-            chunk_projected_weight_indexes = projected_weight_indexes_by_step[-1][start:stop]
         chunk = pd.DataFrame(
             {
-                "projected_weight_index": chunk_projected_weight_indexes,
-                "projected_stock_weight": weight_matrix[chunk_projected_weight_indexes, 0],
-                "projected_bond_weight": weight_matrix[chunk_projected_weight_indexes, 1],
-                "projected_t_bill_weight": weight_matrix[chunk_projected_weight_indexes, 2],
+                "projected_weight_index": chunk_indexes,
+                "projected_stock_weight": weight_matrix[chunk_indexes, 0],
+                "projected_bond_weight": weight_matrix[chunk_indexes, 1],
+                "projected_t_bill_weight": weight_matrix[chunk_indexes, 2],
             }
         )
         for column, values in stats.items():
@@ -425,7 +422,7 @@ def build_greedy_glide_path(
     asset_returns = returns[RETURN_COLUMNS].to_numpy(dtype=float) / 100
     weight_matrix = weights.to_numpy(dtype=float)
     coords = add_simplex_coordinates(weights)
-    neighbor_indexes = build_neighbor_indexes(coords, candidate_radius)
+    coord_matrix = coords[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
 
     rng = make_rng(seed, dataset)
     initial_year_indexes = generate_balanced_initial_year_indexes(
@@ -443,7 +440,7 @@ def build_greedy_glide_path(
         initial_year_indexes=initial_year_indexes,
     )
 
-    selected_weight_indexes: dict[int, int] = {}
+    selected_weights: dict[int, np.ndarray] = {}
     candidate_summaries = []
     checkpoint_candidate_summaries = []
     selected_rows = []
@@ -454,7 +451,15 @@ def build_greedy_glide_path(
         if previous_selected is None:
             candidate_indexes = np.arange(len(weights), dtype=np.int32)
         else:
-            candidate_indexes = neighbor_indexes[int(previous_selected["selected_weight_index"])]
+            previous_xy = np.array(
+                [previous_selected["simplex_x"], previous_selected["simplex_y"]],
+                dtype=float,
+            )
+            distances = np.sqrt(
+                (coord_matrix[:, 0] - previous_xy[0]) ** 2
+                + (coord_matrix[:, 1] - previous_xy[1]) ** 2
+            )
+            candidate_indexes = np.flatnonzero(distances <= candidate_radius)
         effective_projection_steps = 0 if horizon == 1 else projection_steps
         if horizon == 1:
             horizon_summary = exact_one_year_summary(
@@ -467,28 +472,50 @@ def build_greedy_glide_path(
             num_paths = len(returns)
             print("Horizon 1: exact empirical one-year anchor", flush=True)
         else:
+            previous_weights = np.array(
+                [
+                    previous_selected["stock_weight"],
+                    previous_selected["bond_weight"],
+                    previous_selected["t_bill_weight"],
+                ],
+                dtype=float,
+            )
+            first_step_weights = interpolated_weights_for_steps(
+                previous_weights=previous_weights,
+                endpoint_weights=weight_matrix[candidate_indexes],
+                interpolation_steps=effective_projection_steps + 1,
+            )[0]
+            first_step_nearest_indexes = nearest_portfolio_indexes(
+                projected_weights=first_step_weights,
+                weight_matrix=weight_matrix,
+                portfolio_chunk_size=portfolio_chunk_size,
+            )
+            first_step_weights_frame = pd.DataFrame(
+                first_step_weights,
+                columns=["stock_weight", "bond_weight", "t_bill_weight"],
+            )
             horizon_summary, horizon_checkpoint_summaries = summarize_glidepath_horizon(
                 horizon=horizon,
                 paths=paths[:, :horizon],
                 asset_returns=asset_returns,
-                weights=weights,
-                weight_matrix=weight_matrix,
-                candidate_indexes=candidate_indexes,
-                selected_weight_indexes=selected_weight_indexes,
+                candidate_weights=first_step_weights_frame,
+                candidate_weight_matrix=first_step_weights,
+                candidate_nearest_indexes=first_step_nearest_indexes,
+                selected_weights=selected_weights,
                 portfolio_chunk_size=portfolio_chunk_size,
                 checkpoint_levels=checkpoint_levels,
             )
             num_paths = num_simulations
             print(
                 f"Horizon {horizon}: simulated dynamic paths "
-                f"over {len(candidate_indexes):,} local candidates",
+                f"over {len(candidate_indexes):,} look-ahead endpoints",
                 flush=True,
             )
 
         horizon_summary = pd.concat(
             [
                 horizon_summary.reset_index(drop=True),
-                coords.iloc[candidate_indexes][["simplex_x", "simplex_y"]].reset_index(drop=True),
+                add_simplex_coordinates(horizon_summary)[["simplex_x", "simplex_y"]],
             ],
             axis=1,
         )
@@ -506,7 +533,7 @@ def build_greedy_glide_path(
                 asset_returns=asset_returns,
                 weight_matrix=weight_matrix,
                 candidate_indexes=candidate_indexes,
-                selected_weight_indexes=selected_weight_indexes,
+                selected_weights=selected_weights,
                 previous_selected=previous_selected,
                 portfolio_chunk_size=portfolio_chunk_size,
                 projection_steps=effective_projection_steps,
@@ -520,7 +547,7 @@ def build_greedy_glide_path(
             checkpoint_summary = pd.concat(
                 [
                     checkpoint_summary.reset_index(drop=True),
-                    coords.iloc[candidate_indexes][["simplex_x", "simplex_y"]].reset_index(drop=True),
+                    add_simplex_coordinates(checkpoint_summary)[["simplex_x", "simplex_y"]],
                 ],
                 axis=1,
             )
@@ -550,8 +577,14 @@ def build_greedy_glide_path(
             path_distance_lambda,
             path_direction_lambda,
         )
-        selected_index = int(selected["selected_weight_index"])
-        selected_weight_indexes[horizon] = selected_index
+        selected_weights[horizon] = np.array(
+            [
+                selected["stock_weight"],
+                selected["bond_weight"],
+                selected["t_bill_weight"],
+            ],
+            dtype=float,
+        )
         previous_selected = selected
         selected_rows.append(selected)
         candidate_summaries.append(horizon_summary)
@@ -568,7 +601,6 @@ def build_greedy_glide_path(
 
     candidate_summary = pd.concat(candidate_summaries, ignore_index=True)
     path = pd.DataFrame(selected_rows).reset_index(drop=True)
-    path["selected_weight_index"] = [selected_weight_indexes[horizon] for horizon in path["horizon"]]
     path["glidepath_note"] = "A full-horizon investor follows rows from max horizon down to horizon 1."
 
     ordered_columns = [
@@ -685,8 +717,8 @@ def write_metadata(
             (
                 "projected_continuation",
                 (
-                    "candidate H step is extended N same-distance same-direction steps, "
-                    "projected to simplex and snapped to grid"
+                    "candidate H+N endpoint is connected to the previous selected portfolio "
+                    "with N+1 exact linear interpolation steps"
                 ),
             ),
             ("path_distance_lambda", path_distance_lambda),

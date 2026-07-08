@@ -117,7 +117,7 @@ Current main glide path settings:
 - summaries include `q01`, `q02`, `q10`, `median`, `mean`, and `worst_4pct_mean`
 - the main glide path script no longer supports portfolio smoothing; path-distance and path-direction regularization are off by default unless explicitly requested
 - after horizon 1, candidate portfolios are limited to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio; default radius is `0.10`
-- same-distance/same-direction projected continuation is configurable with `--projection-steps`; default is `4`
+- endpoint lookahead with linear interpolation is configurable with `--projection-steps`; default is `4`
 - outputs live under `data/<dataset>/glide_path/` and `plots/<dataset>/glide_path/`
 
 Important changes from earlier glide path attempts:
@@ -126,8 +126,7 @@ Important changes from earlier glide path attempts:
 - This metric is currently preferred over `q02` because it appears smoother across horizons and across nearby portfolios.
 - Horizon 1 is now anchored using the exact empirical `worst_4pct_mean`. For the 99-year `from_1927` sample, that means averaging the worst 4 one-year outcomes.
 - The main script no longer uses the expensive pairwise local lookahead as its default logic.
-- Instead, for each candidate at horizon `H`, the main script projects `N` more steps in the same simplex direction and scores the projected `H + N` path, while still committing only the horizon-`H` decision.
-- If a projected continuation leaves the simplex, it is projected back to the valid simplex and snapped to the nearest grid portfolio.
+- Instead, for each candidate endpoint at horizon `H + N`, the main script linearly interpolates `N + 1` exact, unsnapped steps from the previous selected portfolio to that endpoint and scores the resulting `H + N` path, while still committing only the horizon-`H` first step.
 - The old alternate `simulate_glide_path_lookahead.py` script was removed. `simulate_glide_path.py` is now the single glide-path simulation script and includes the lookahead-style projected continuation logic.
 
 What we have learned so far in the glide path arm:
@@ -220,9 +219,9 @@ Major retirement-arm choices and experiments so far:
 - The post-retirement objective was changed to maximize the mean terminal wealth ratio among the worst 2% of paths, with no hard 50% floor constraint.
 - Withdrawal rate was changed to 3.5% real after experiments at 3% and 4%.
 - A withdrawal-rate sweep script was added because an early line plot looked suspiciously linear. The dotted 0.5 reference line was removed.
-- Pre-retirement logic borrowed the greedy glide-path machinery, including same-distance/same-direction projection lookahead and diagnostic plots.
+- Pre-retirement logic borrows the greedy glide-path machinery, including endpoint lookahead with exact linear interpolation and diagnostic plots.
 - Candidate search was sped up by limiting pre-retirement candidates to portfolios within `0.1` Euclidean simplex-coordinate distance of the next older selected portfolio.
-- Projection lookahead was made configurable with `--projection-steps`; the retirement default was set to 4.
+- Endpoint lookahead was made configurable with `--projection-steps`; the retirement default was set to 4.
 - Pre-retirement objective has been tried with worst 4% and worst 2% tails. Worst 2% was surprisingly comparable to Vanguard and Fidelity, but the current settled default is worst 4%. The post-retirement objective remains worst 2%.
 - Annual contribution modeling was added to both the retirement simulation and external comparison script.
 - A one-off option `--pre-retirement-target age65` was added to `simulate_retirement.py` to optimize accumulated age-65 wealth over contributions rather than age-90 terminal wealth after the post-retirement block. A one-off run wrote to `data/from_1927/retirement_age65_objective/`.
@@ -241,7 +240,7 @@ Current pre-retirement algorithm:
 2. Simulate annual contributions forward under that reference path and estimate, for each age, the mean ratio `annual_contribution / entering_balance` across bootstrapped paths. The denominator is the account balance entering that age before that year's contribution.
 3. Run the final greedy pre-retirement pass using those age-specific real contribution constants. Age 20 still starts from zero; later ages use a unit entering balance with a contribution scaled to the reference-path ratio.
 4. Preserve the contribution timing convention used by the simulator: contributions are added at the beginning of each pre-retirement year, then that year's return is applied.
-5. Use same-direction projection lookahead when scoring candidates, with projected contribution constants taken from the projected starting age.
+5. Use endpoint lookahead with exact linear interpolation when scoring candidates, with projected contribution constants taken from the projected starting age.
 
 The current pre-retirement objective uses an XIRR-to-65 times post-retirement-block framing:
 

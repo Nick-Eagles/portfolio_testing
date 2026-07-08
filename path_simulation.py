@@ -84,3 +84,18 @@ def projected_weight_indexes_for_steps(
             )
         )
     return result
+
+
+def interpolated_weights_for_steps(
+    previous_weights: np.ndarray,
+    endpoint_weights: np.ndarray,
+    interpolation_steps: int,
+) -> list[np.ndarray]:
+    if interpolation_steps < 1:
+        raise ValueError("interpolation_steps must be positive.")
+
+    direction = endpoint_weights - previous_weights
+    result = []
+    for step in range(1, interpolation_steps + 1):
+        result.append(previous_weights + direction * (step / interpolation_steps))
+    return result

@@ -9,10 +9,10 @@ from convex_smoothing import add_simplex_coordinates
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from evaluate_greedy_algorithm.best_run_registry import maybe_record_best_run
 from path_simulation import (
-    build_neighbor_indexes,
+    interpolated_weights_for_steps,
     lower_quantiles_in_place,
     mean_of_worst_tail_fraction,
-    projected_weight_indexes_for_steps,
+    nearest_portfolio_indexes,
     zscore_values,
 )
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
@@ -106,8 +106,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_PROJECTION_STEPS,
         help=(
-            "Number of same-distance, same-direction younger-age projection steps "
-            "used when scoring pre-retirement candidates."
+            "Number of pre-retirement look-ahead steps. Endpoint candidates are "
+            "searched on the grid, then evaluated with exact linear interpolation."
         ),
     )
     parser.add_argument(
@@ -403,9 +403,9 @@ def summarize_fixed_post_retirement_candidates(
 def pre_retirement_terminal_balances(
     start_age: int,
     paths: np.ndarray,
-    annual_returns: np.ndarray,
-    candidate_indexes: np.ndarray,
-    selected_weight_indexes_by_age: dict[int, int],
+    asset_returns: np.ndarray,
+    candidate_weight_matrix: np.ndarray,
+    selected_weights_by_age: dict[int, np.ndarray],
     post_retirement_balance_ratios: np.ndarray,
     annual_contribution: float,
     starting_balance: float,
@@ -413,14 +413,20 @@ def pre_retirement_terminal_balances(
     if start_age > RETIREMENT_AGE:
         raise ValueError("pre-retirement starting age must be at most the retirement age.")
 
-    balances = np.full((paths.shape[0], len(candidate_indexes)), starting_balance, dtype=float)
+    balances = np.full((paths.shape[0], len(candidate_weight_matrix)), starting_balance, dtype=float)
     for age in range(start_age, RETIREMENT_AGE + 1):
         balances += annual_contribution
         if age == start_age:
-            selected_indexes = candidate_indexes
+            year_returns = (
+                asset_returns[paths[:, age_path_offset(age)]]
+                @ candidate_weight_matrix.T
+            )
         else:
-            selected_indexes = np.array([selected_weight_indexes_by_age[age]], dtype=np.int32)
-        balances *= 1 + annual_returns[paths[:, age_path_offset(age)]][:, selected_indexes]
+            year_returns = (
+                asset_returns[paths[:, age_path_offset(age)]]
+                @ selected_weights_by_age[age]
+            )[:, None]
+        balances *= 1 + year_returns
 
     num_years = RETIREMENT_AGE - start_age + 1
     pre_retirement_growth_ratio = constant_growth_ratio_from_terminal_value(
@@ -435,26 +441,31 @@ def pre_retirement_terminal_balances(
 def projected_pre_retirement_terminal_balances(
     start_age: int,
     paths: np.ndarray,
-    annual_returns: np.ndarray,
-    candidate_indexes: np.ndarray,
-    projected_candidate_indexes_by_step: list[np.ndarray],
-    selected_weight_indexes_by_age: dict[int, int],
+    asset_returns: np.ndarray,
+    interpolated_weights_by_step: list[np.ndarray],
+    selected_weights_by_age: dict[int, np.ndarray],
     post_retirement_balance_ratios: np.ndarray,
     annual_contribution: float,
     starting_balance: float,
 ) -> np.ndarray:
-    effective_projection_steps = len(projected_candidate_indexes_by_step)
+    effective_projection_steps = len(interpolated_weights_by_step) - 1
     projected_start_age = start_age - effective_projection_steps
-    balances = np.full((paths.shape[0], len(candidate_indexes)), starting_balance, dtype=float)
+    balances = np.full(
+        (paths.shape[0], len(interpolated_weights_by_step[0])),
+        starting_balance,
+        dtype=float,
+    )
     for age in range(projected_start_age, RETIREMENT_AGE + 1):
         balances += annual_contribution
-        if age < start_age:
-            selected_indexes = projected_candidate_indexes_by_step[start_age - age - 1]
-        elif age == start_age:
-            selected_indexes = candidate_indexes
+        if age <= start_age:
+            step_weights = interpolated_weights_by_step[start_age - age]
+            year_returns = asset_returns[paths[:, age_path_offset(age)]] @ step_weights.T
         else:
-            selected_indexes = np.array([selected_weight_indexes_by_age[age]], dtype=np.int32)
-        balances *= 1 + annual_returns[paths[:, age_path_offset(age)]][:, selected_indexes]
+            year_returns = (
+                asset_returns[paths[:, age_path_offset(age)]]
+                @ selected_weights_by_age[age]
+            )[:, None]
+        balances *= 1 + year_returns
 
     num_years = RETIREMENT_AGE - projected_start_age + 1
     pre_retirement_growth_ratio = constant_growth_ratio_from_terminal_value(
@@ -469,11 +480,10 @@ def projected_pre_retirement_terminal_balances(
 def summarize_pre_retirement_age(
     start_age: int,
     paths: np.ndarray,
-    weights: pd.DataFrame,
     weight_matrix: np.ndarray,
     candidate_indexes: np.ndarray,
-    annual_returns: np.ndarray,
-    selected_weight_indexes_by_age: dict[int, int],
+    asset_returns: np.ndarray,
+    selected_weights_by_age: dict[int, np.ndarray],
     post_retirement_balance_ratios: np.ndarray,
     next_older_selected: pd.Series,
     path_rows_descending_age: list[pd.Series],
@@ -503,11 +513,16 @@ def summarize_pre_retirement_age(
         dtype=float,
     )
     effective_projection_steps = min(projection_steps, start_age - MIN_STARTING_AGE)
-    projected_weight_indexes_by_step = projected_weight_indexes_for_steps(
+    interpolation_steps = effective_projection_steps + 1
+    interpolated_weights_by_step = interpolated_weights_for_steps(
         previous_weights=previous_weights,
-        candidate_weights=weight_matrix[candidate_indexes],
+        endpoint_weights=weight_matrix[candidate_indexes],
+        interpolation_steps=interpolation_steps,
+    )
+    first_step_weights = interpolated_weights_by_step[0]
+    first_step_nearest_indexes = nearest_portfolio_indexes(
+        projected_weights=first_step_weights,
         weight_matrix=weight_matrix,
-        projection_steps=effective_projection_steps,
         portfolio_chunk_size=portfolio_chunk_size,
     )
 
@@ -521,9 +536,9 @@ def summarize_pre_retirement_age(
         terminal_balances = pre_retirement_terminal_balances(
             start_age=start_age,
             paths=paths,
-            annual_returns=annual_returns,
-            candidate_indexes=chunk_indexes,
-            selected_weight_indexes_by_age=selected_weight_indexes_by_age,
+            asset_returns=asset_returns,
+            candidate_weight_matrix=first_step_weights[start:stop],
+            selected_weights_by_age=selected_weights_by_age,
             post_retirement_balance_ratios=post_retirement_balance_ratios,
             annual_contribution=annual_contribution,
             starting_balance=starting_balance,
@@ -535,20 +550,23 @@ def summarize_pre_retirement_age(
             projected_terminal_balances = projected_pre_retirement_terminal_balances(
                 start_age=start_age,
                 paths=paths,
-                annual_returns=annual_returns,
-                candidate_indexes=chunk_indexes,
-                projected_candidate_indexes_by_step=[
-                    indexes[start:stop] for indexes in projected_weight_indexes_by_step
+                asset_returns=asset_returns,
+                interpolated_weights_by_step=[
+                    step_weights[start:stop] for step_weights in interpolated_weights_by_step
                 ],
-                selected_weight_indexes_by_age=selected_weight_indexes_by_age,
+                selected_weights_by_age=selected_weights_by_age,
                 post_retirement_balance_ratios=post_retirement_balance_ratios,
                 annual_contribution=projected_annual_contribution,
                 starting_balance=projected_starting_balance,
             )
-            chunk_projected_weight_indexes = projected_weight_indexes_by_step[-1][start:stop]
-        chunk = summarize_candidates(weights.iloc[chunk_indexes], terminal_balances)
+            chunk_projected_weight_indexes = chunk_indexes
+        chunk_weights = pd.DataFrame(
+            first_step_weights[start:stop],
+            columns=WEIGHT_COLUMNS,
+        )
+        chunk = summarize_candidates(chunk_weights, terminal_balances)
         projected_stats = summarize_terminal_balances(projected_terminal_balances)
-        chunk["selected_weight_index"] = chunk_indexes
+        chunk["selected_weight_index"] = first_step_nearest_indexes[start:stop]
         chunk["projection_steps"] = projection_steps
         chunk["effective_projection_steps"] = effective_projection_steps
         chunk["starting_balance"] = starting_balance
@@ -565,8 +583,8 @@ def summarize_pre_retirement_age(
 
         for checkpoint in checkpoint_levels:
             checkpoint_chunks[checkpoint].append(
-                summarize_candidates(weights.iloc[chunk_indexes], terminal_balances[:checkpoint]).assign(
-                    selected_weight_index=chunk_indexes,
+                summarize_candidates(chunk_weights, terminal_balances[:checkpoint]).assign(
+                    selected_weight_index=first_step_nearest_indexes[start:stop],
                     projection_steps=projection_steps,
                     effective_projection_steps=effective_projection_steps,
                     starting_balance=starting_balance,
@@ -624,8 +642,8 @@ def choose_post_retirement_portfolio(post_summary: pd.DataFrame) -> pd.Series:
 
 def estimate_contribution_scales(
     paths: np.ndarray,
-    annual_returns: np.ndarray,
-    selected_weight_indexes_by_age: dict[int, int],
+    asset_returns: np.ndarray,
+    selected_weights_by_age: dict[int, np.ndarray],
     annual_contribution: float,
 ) -> tuple[dict[int, float], pd.DataFrame]:
     balance = np.zeros(paths.shape[0], dtype=float)
@@ -652,21 +670,24 @@ def estimate_contribution_scales(
             }
         )
 
-        selected_index = selected_weight_indexes_by_age[age]
         balance += annual_contribution
-        balance *= 1 + annual_returns[paths[:, age_path_offset(age)], selected_index]
+        year_returns = (
+            asset_returns[paths[:, age_path_offset(age)]]
+            @ selected_weights_by_age[age]
+        )
+        balance *= 1 + year_returns
 
     return contribution_by_age, pd.DataFrame(rows)
 
 
 def run_pre_retirement_greedy(
     paths: np.ndarray,
-    weights: pd.DataFrame,
     weight_matrix: np.ndarray,
-    annual_returns: np.ndarray,
+    asset_returns: np.ndarray,
     selected_weight_indexes_by_age: dict[int, int],
+    selected_weights_by_age: dict[int, np.ndarray],
     post_retirement_balance_ratios: np.ndarray,
-    neighbor_indexes: list[np.ndarray],
+    coord_matrix: np.ndarray,
     post_path_template: pd.Series,
     portfolio_chunk_size: int,
     checkpoint_levels: tuple[int, ...],
@@ -678,8 +699,15 @@ def run_pre_retirement_greedy(
     starting_balance_by_age: dict[int, float],
     phase: str,
     collect_summaries: bool,
-) -> tuple[dict[int, int], list[pd.Series], list[pd.DataFrame], list[pd.DataFrame]]:
+) -> tuple[
+    dict[int, int],
+    dict[int, np.ndarray],
+    list[pd.Series],
+    list[pd.DataFrame],
+    list[pd.DataFrame],
+]:
     selected_indexes = selected_weight_indexes_by_age.copy()
+    selected_weights = selected_weights_by_age.copy()
     candidate_summaries = []
     checkpoint_candidate_summaries = []
     path_rows_descending_age = []
@@ -687,17 +715,24 @@ def run_pre_retirement_greedy(
     next_older_selected["starting_age"] = FIRST_WITHDRAWAL_AGE
 
     for age in range(RETIREMENT_AGE, MIN_STARTING_AGE - 1, -1):
-        candidate_indexes = neighbor_indexes[int(next_older_selected["selected_weight_index"])]
+        next_older_xy = np.array(
+            [next_older_selected["simplex_x"], next_older_selected["simplex_y"]],
+            dtype=float,
+        )
+        distances = np.sqrt(
+            (coord_matrix[:, 0] - next_older_xy[0]) ** 2
+            + (coord_matrix[:, 1] - next_older_xy[1]) ** 2
+        )
+        candidate_indexes = np.flatnonzero(distances <= candidate_radius)
         effective_projection_steps = min(projection_steps, age - MIN_STARTING_AGE)
         projected_start_age = age - effective_projection_steps
         selected, age_summary, age_checkpoint_summaries = summarize_pre_retirement_age(
             start_age=age,
             paths=paths,
-            weights=weights,
             weight_matrix=weight_matrix,
             candidate_indexes=candidate_indexes,
-            annual_returns=annual_returns,
-            selected_weight_indexes_by_age=selected_indexes,
+            asset_returns=asset_returns,
+            selected_weights_by_age=selected_weights,
             post_retirement_balance_ratios=post_retirement_balance_ratios,
             next_older_selected=next_older_selected,
             path_rows_descending_age=path_rows_descending_age,
@@ -723,6 +758,7 @@ def run_pre_retirement_greedy(
 
         selected_index = int(selected["selected_weight_index"])
         selected_indexes[age] = selected_index
+        selected_weights[age] = selected[WEIGHT_COLUMNS].to_numpy(dtype=float)
         selected["starting_age"] = age
         selected["phase"] = phase
         selected["block_length"] = BLOCK_LENGTH
@@ -756,6 +792,7 @@ def run_pre_retirement_greedy(
 
     return (
         selected_indexes,
+        selected_weights,
         path_rows_descending_age,
         candidate_summaries,
         checkpoint_candidate_summaries,
@@ -794,7 +831,7 @@ def build_retirement_path(
     weight_matrix = weights.to_numpy(dtype=float)
     annual_returns = asset_returns @ weight_matrix.T
     coords = add_simplex_coordinates(weights)
-    neighbor_indexes = build_neighbor_indexes(coords, candidate_radius)
+    coord_matrix = coords[["simplex_x", "simplex_y"]].to_numpy(dtype=float)
 
     rng = make_rng(seed, dataset)
     initial_year_indexes = generate_balanced_initial_year_indexes(
@@ -844,6 +881,10 @@ def build_retirement_path(
 
     selected_weight_indexes_by_age = {
         age: selected_post_index for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1)
+    }
+    selected_weights_by_age = {
+        age: weight_matrix[selected_post_index]
+        for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1)
     }
     post_retirement_balance_ratios = retirement_balance_ratios_for_paths(
         paths=paths,
@@ -896,17 +937,18 @@ def build_retirement_path(
     }
     (
         reference_weight_indexes_by_age,
+        reference_weights_by_age,
         reference_pre_path_rows_descending_age,
         _reference_candidate_summaries,
         _reference_checkpoint_summaries,
     ) = run_pre_retirement_greedy(
         paths=paths,
-        weights=weights,
         weight_matrix=weight_matrix,
-        annual_returns=annual_returns,
+        asset_returns=asset_returns,
         selected_weight_indexes_by_age=selected_weight_indexes_by_age,
+        selected_weights_by_age=selected_weights_by_age,
         post_retirement_balance_ratios=post_retirement_balance_ratios,
-        neighbor_indexes=neighbor_indexes,
+        coord_matrix=coord_matrix,
         post_path_template=post_path_template,
         portfolio_chunk_size=portfolio_chunk_size,
         checkpoint_levels=(),
@@ -922,8 +964,8 @@ def build_retirement_path(
 
     contribution_by_age, contribution_scale_summary = estimate_contribution_scales(
         paths=paths,
-        annual_returns=annual_returns,
-        selected_weight_indexes_by_age=reference_weight_indexes_by_age,
+        asset_returns=asset_returns,
+        selected_weights_by_age=reference_weights_by_age,
         annual_contribution=annual_contribution,
     )
     contribution_starting_balance_by_age = {
@@ -931,29 +973,36 @@ def build_retirement_path(
     }
     contribution_starting_balance_by_age[MIN_STARTING_AGE] = 0.0
 
-    selected_weight_indexes_by_age, pre_path_rows_descending_age, pre_candidate_summaries, pre_checkpoint_summaries = (
-        run_pre_retirement_greedy(
-            paths=paths,
-            weights=weights,
-            weight_matrix=weight_matrix,
-            annual_returns=annual_returns,
-            selected_weight_indexes_by_age={
-                age: selected_post_index for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1)
-            },
-            post_retirement_balance_ratios=post_retirement_balance_ratios,
-            neighbor_indexes=neighbor_indexes,
-            post_path_template=post_path_template,
-            portfolio_chunk_size=portfolio_chunk_size,
-            checkpoint_levels=checkpoint_levels,
-            path_distance_lambda=path_distance_lambda,
-            path_direction_lambda=path_direction_lambda,
-            candidate_radius=candidate_radius,
-            projection_steps=projection_steps,
-            contribution_by_age=contribution_by_age,
-            starting_balance_by_age=contribution_starting_balance_by_age,
-            phase="pre_retirement_greedy",
-            collect_summaries=True,
-        )
+    (
+        selected_weight_indexes_by_age,
+        selected_weights_by_age,
+        pre_path_rows_descending_age,
+        pre_candidate_summaries,
+        pre_checkpoint_summaries,
+    ) = run_pre_retirement_greedy(
+        paths=paths,
+        weight_matrix=weight_matrix,
+        asset_returns=asset_returns,
+        selected_weight_indexes_by_age={
+            age: selected_post_index for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1)
+        },
+        selected_weights_by_age={
+            age: weight_matrix[selected_post_index]
+            for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1)
+        },
+        post_retirement_balance_ratios=post_retirement_balance_ratios,
+        coord_matrix=coord_matrix,
+        post_path_template=post_path_template,
+        portfolio_chunk_size=portfolio_chunk_size,
+        checkpoint_levels=checkpoint_levels,
+        path_distance_lambda=path_distance_lambda,
+        path_direction_lambda=path_direction_lambda,
+        candidate_radius=candidate_radius,
+        projection_steps=projection_steps,
+        contribution_by_age=contribution_by_age,
+        starting_balance_by_age=contribution_starting_balance_by_age,
+        phase="pre_retirement_greedy",
+        collect_summaries=True,
     )
     candidate_summaries.extend(pre_candidate_summaries)
     checkpoint_candidate_summaries.extend(pre_checkpoint_summaries)
@@ -1077,7 +1126,10 @@ def write_metadata(
             ),
             (
                 "pre_retirement_lookahead",
-                "candidate younger-age step is projected same-distance same-direction for configured N steps",
+                (
+                    "candidate younger-age endpoint is searched on the portfolio grid, "
+                    "then evaluated through N+1 exact linear interpolation steps"
+                ),
             ),
             ("portfolio_chunk_size", portfolio_chunk_size),
             ("candidate_radius", candidate_radius),
