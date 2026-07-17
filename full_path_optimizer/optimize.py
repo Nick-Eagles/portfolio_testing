@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="from_1927")
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--iterations", type=int, default=400)
+    parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument("--random-starts", type=int, default=4)
     parser.add_argument("--start-seed", type=int, default=6217)
