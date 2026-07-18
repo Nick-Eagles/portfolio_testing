@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-strength",
         type=float,
-        default=0.02,
+        default=0.1,
         help=(
             "Convex smoothing weight for each interior horizon when --smooth is set. "
             "0 leaves the path unchanged; 1 replaces each interior value with the "
