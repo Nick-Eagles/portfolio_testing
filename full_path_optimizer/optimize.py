@@ -43,6 +43,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random-starts", type=int, default=4)
     parser.add_argument("--start-seed", type=int, default=6217)
     parser.add_argument(
+        "--smooth",
+        action="store_true",
+        help="Apply experimental convex horizon smoothing between gradient steps.",
+    )
+    parser.add_argument(
+        "--smoothing-strength",
+        type=float,
+        default=0.02,
+        help=(
+            "Convex smoothing weight for each interior horizon when --smooth is set. "
+            "0 leaves the path unchanged; 1 replaces each interior value with the "
+            "average of its neighboring horizons. Default is intentionally gentle."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=SCRIPT_DIR / "outputs",
@@ -53,6 +68,56 @@ def parse_args() -> argparse.Namespace:
         default=SCRIPT_DIR / "plots" / "gradient_ascent",
     )
     return parser.parse_args()
+
+
+def smooth_curve_with_fixed_endpoints(values: np.ndarray, strength: float) -> np.ndarray:
+    if not 0 <= strength <= 1:
+        raise ValueError("--smoothing-strength must be between 0 and 1.")
+    smoothed = values.copy()
+    if len(values) <= 2 or strength == 0:
+        return smoothed
+    neighbor_average = 0.5 * (values[:-2] + values[2:])
+    smoothed[1:-1] = (1 - strength) * values[1:-1] + strength * neighbor_average
+    return smoothed
+
+
+def rescale_bonds_and_bills_after_stock_smoothing(
+    weights: np.ndarray,
+    smoothed_stock: np.ndarray,
+) -> np.ndarray:
+    result = weights.copy()
+    remaining = 1 - smoothed_stock
+    bond_bill_total = weights[:, 1] + weights[:, 2]
+    has_proportions = bond_bill_total > 1e-12
+    result[:, 0] = smoothed_stock
+    result[has_proportions, 1] = (
+        weights[has_proportions, 1] / bond_bill_total[has_proportions]
+    ) * remaining[has_proportions]
+    result[has_proportions, 2] = (
+        weights[has_proportions, 2] / bond_bill_total[has_proportions]
+    ) * remaining[has_proportions]
+    result[~has_proportions, 1] = 0.0
+    result[~has_proportions, 2] = remaining[~has_proportions]
+    return result
+
+
+def smooth_path_between_gradient_steps(
+    weights: np.ndarray,
+    horizon_one: np.ndarray,
+    strength: float,
+) -> np.ndarray:
+    """Sequential convex horizon smoothing with simplex-preserving adjustments."""
+    smoothed_stock = smooth_curve_with_fixed_endpoints(weights[:, 0], strength)
+    result = rescale_bonds_and_bills_after_stock_smoothing(weights, smoothed_stock)
+
+    smoothed_bond = smooth_curve_with_fixed_endpoints(result[:, 1], strength)
+    result[:, 1] = np.minimum(smoothed_bond, 1 - result[:, 0])
+    result[:, 2] = 1 - result[:, 0] - result[:, 1]
+    result = np.clip(result, 0.0, 1.0)
+    result = project_path_to_simplex(result)
+    result[0] = horizon_one
+    result[-1] = weights[-1]
+    return result
 
 
 def build_starts(
@@ -89,6 +154,8 @@ def optimize_from_start(
     horizon_one: np.ndarray,
     iterations: int,
     learning_rate: float,
+    smooth: bool,
+    smoothing_strength: float,
 ) -> tuple[np.ndarray, list[float], list[pd.DataFrame]]:
     """Projected Adam ascent; horizon-1 row is held fixed."""
     weights = initial_weights.copy()
@@ -122,6 +189,12 @@ def optimize_from_start(
         )
         weights = project_path_to_simplex(weights)
         weights[0] = horizon_one
+        if smooth:
+            weights = smooth_path_between_gradient_steps(
+                weights,
+                horizon_one,
+                smoothing_strength,
+            )
         trajectory.append(weights_to_frame(weights).assign(iteration=step))
 
     # Final evaluation to allow the last iterate to win.
@@ -136,6 +209,8 @@ def optimize_from_start(
 
 def main() -> None:
     args = parse_args()
+    if not 0 <= args.smoothing_strength <= 1:
+        raise ValueError("--smoothing-strength must be between 0 and 1.")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     asset_returns = load_asset_return_matrix(args.dataset)
@@ -163,6 +238,8 @@ def main() -> None:
             horizon_one=horizon_one,
             iterations=args.iterations,
             learning_rate=args.learning_rate,
+            smooth=args.smooth,
+            smoothing_strength=args.smoothing_strength,
         )
         canonical = path_objective(path_returns, weights, asset_returns)
         elapsed = time.time() - began

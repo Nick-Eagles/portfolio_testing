@@ -127,7 +127,9 @@ fix is to reweight horizons in the objective (a one-line change in
   per-start end solutions to `outputs/start_paths/`, per-start trajectories to
   `outputs/gradient_trajectories/`, traces, and gradient-ascent plots including
   `plots/gradient_ascent/end_paths.pdf` and
-  `plots/gradient_ascent/best_path_snapshots.pdf`.
+  `plots/gradient_ascent/best_path_snapshots.pdf`. It also supports an
+  experimental `--smooth --smoothing-strength <value>` mode that applies gentle
+  convex horizon smoothing between gradient-ascent steps.
 - `grid_certificate.py` — local grid coordinate ascent. Writes
   `outputs/polished_path.csv` (the final recommended path), polish diagnostics,
   and coordinate-ascent plots.
