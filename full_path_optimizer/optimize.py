@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from core import (
+    DEFAULT_BLOCK_LENGTH,
     DEFAULT_HORIZON_50_WEIGHT_RATIO,
     MAX_HORIZON,
     PROJECT_ROOT,
@@ -39,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="from_1927")
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
     parser.add_argument("--iterations", type=int, default=30)
     parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument(
@@ -232,11 +234,16 @@ def main() -> None:
         raise ValueError("--smoothing-strength must be between 0 and 1.")
     if args.horizon_50_weight_ratio <= 0:
         raise ValueError("--horizon-50-weight-ratio must be positive.")
+    if args.block_length < 1:
+        raise ValueError("--block-length must be at least 1.")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     asset_returns = load_asset_return_matrix(args.dataset)
     path_returns = make_shared_path_returns(
-        args.dataset, args.num_simulations, seed=args.seed
+        args.dataset,
+        args.num_simulations,
+        seed=args.seed,
+        block_length=args.block_length,
     )
     horizon_one = select_exact_horizon_one(args.dataset)
     print(f"horizon-1 anchor: {np.round(horizon_one, 4)}")

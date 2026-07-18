@@ -20,6 +20,7 @@ current worst-4% set at each horizon.
 from __future__ import annotations
 
 import sys
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +33,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
-from simulate_glide_path import BLOCK_LENGTH, DEFAULT_SEED, make_rng
+from simulate_glide_path import BLOCK_LENGTH as DEFAULT_BLOCK_LENGTH, DEFAULT_SEED
 from simulate_returns import (
     generate_balanced_initial_year_indexes,
     generate_resampled_paths,
@@ -43,6 +44,17 @@ MAX_HORIZON = 50
 WORST_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
 DEFAULT_HORIZON_50_WEIGHT_RATIO = 1 / 8
+
+
+def make_full_path_rng(
+    seed: int,
+    dataset: str,
+    block_length: int,
+) -> np.random.Generator:
+    dataset_id = zlib.crc32(dataset.encode("utf-8"))
+    stream_id = zlib.crc32(b"greedy_glide_path")
+    seed_sequence = np.random.SeedSequence([seed, dataset_id, block_length, stream_id])
+    return np.random.default_rng(seed_sequence)
 
 
 def load_asset_return_matrix(dataset: str) -> np.ndarray:
@@ -56,6 +68,7 @@ def make_shared_path_returns(
     num_simulations: int,
     seed: int = DEFAULT_SEED,
     max_horizon: int = MAX_HORIZON,
+    block_length: int = DEFAULT_BLOCK_LENGTH,
 ) -> np.ndarray:
     """Per-simulation asset returns, shape (num_simulations, max_horizon, 3).
 
@@ -63,9 +76,11 @@ def make_shared_path_returns(
     default seed reproduces the paths used by the greedy script and by
     `evaluate_greedy_algorithm/compare_alternative_paths.py`.
     """
+    if block_length < 1:
+        raise ValueError("block_length must be at least 1.")
     asset_returns = load_asset_return_matrix(dataset)
     num_years = asset_returns.shape[0]
-    rng = make_rng(seed, dataset)
+    rng = make_full_path_rng(seed, dataset, block_length)
     initial_year_indexes = generate_balanced_initial_year_indexes(
         num_years=num_years,
         num_simulations=num_simulations,
@@ -74,7 +89,7 @@ def make_shared_path_returns(
     paths = generate_resampled_paths(
         num_years=num_years,
         horizon=max_horizon,
-        block_length=BLOCK_LENGTH,
+        block_length=block_length,
         num_simulations=num_simulations,
         rng=rng,
         initial_year_indexes=initial_year_indexes,
