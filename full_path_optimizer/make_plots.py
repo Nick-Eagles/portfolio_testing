@@ -8,6 +8,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import Collection
 import numpy as np
 import pandas as pd
 
@@ -27,6 +28,9 @@ PATH_COLORS = {
     "greedy": "black",
     "bisected": "#d95f02",
 }
+HORIZON_MARKERS = tuple(range(10, 51, 10))
+HORIZON_CMAP = "viridis"
+HORIZON_NORM = plt.Normalize(min(HORIZON_MARKERS), max(HORIZON_MARKERS))
 
 
 def load_strategies(dataset: str, path_csv: Path) -> dict[str, pd.DataFrame]:
@@ -43,9 +47,43 @@ def load_strategies(dataset: str, path_csv: Path) -> dict[str, pd.DataFrame]:
     return strategies
 
 
+def add_horizon_markers(
+    ax: plt.Axes,
+    coords: pd.DataFrame,
+    size: float = 28,
+) -> Collection | None:
+    markers = coords[coords["horizon"].isin(HORIZON_MARKERS)]
+    if markers.empty:
+        return None
+    return ax.scatter(
+        markers["simplex_x"],
+        markers["simplex_y"],
+        c=markers["horizon"],
+        cmap=HORIZON_CMAP,
+        norm=HORIZON_NORM,
+        marker="o",
+        s=size,
+        edgecolors="white",
+        linewidths=0.45,
+        zorder=5,
+    )
+
+
+def add_horizon_colorbar(
+    fig: plt.Figure,
+    mappable: Collection | None,
+    axes: plt.Axes | list[plt.Axes] | np.ndarray,
+) -> None:
+    if mappable is None:
+        return
+    colorbar = fig.colorbar(mappable, ax=axes, ticks=HORIZON_MARKERS, shrink=0.82)
+    colorbar.set_label("Horizon")
+
+
 def plot_simplex_paths(strategies: dict[str, pd.DataFrame], output_pdf: Path) -> None:
     fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
     draw_simplex_outline(ax)
+    marker_mappable = None
     for name, frame in strategies.items():
         coords = add_simplex_coordinates(frame.sort_values("horizon"))
         ax.plot(
@@ -64,20 +102,11 @@ def plot_simplex_paths(strategies: dict[str, pd.DataFrame], output_pdf: Path) ->
             s=45,
             zorder=4,
         )
-        for marker_horizon in (10, 20, 30, 40):
-            row = coords[coords["horizon"] == marker_horizon]
-            if len(row):
-                ax.scatter(
-                    row["simplex_x"],
-                    row["simplex_y"],
-                    color=PATH_COLORS.get(name, "gray"),
-                    marker="o",
-                    s=18,
-                    zorder=4,
-                )
+        marker_mappable = add_horizon_markers(ax, coords)
     ax.set_title("Glide paths on the asset simplex (squares mark horizon 1)")
     ax.legend(frameon=False, loc="upper left")
     ax.set_aspect("equal")
+    add_horizon_colorbar(fig, marker_mappable, ax)
     fig.savefig(output_pdf)
     plt.close(fig)
 
@@ -189,6 +218,7 @@ def plot_end_paths(start_paths_dir: Path, output_pdf: Path, columns: int = 3) ->
         constrained_layout=True,
         squeeze=False,
     )
+    marker_mappable = None
     for ax, csv_path in zip(axes.ravel(), csv_paths):
         draw_simplex_outline(ax)
         coords = add_simplex_coordinates(pd.read_csv(csv_path).sort_values("horizon"))
@@ -207,22 +237,13 @@ def plot_end_paths(start_paths_dir: Path, output_pdf: Path, columns: int = 3) ->
             s=30,
             zorder=4,
         )
-        for marker_horizon in (10, 20, 30, 40):
-            row = coords[coords["horizon"] == marker_horizon]
-            if len(row):
-                ax.scatter(
-                    row["simplex_x"],
-                    row["simplex_y"],
-                    color=PATH_COLORS.get(csv_path.stem, "#1f77b4"),
-                    marker="o",
-                    s=14,
-                    zorder=4,
-                )
+        marker_mappable = add_horizon_markers(ax, coords, size=22)
         ax.set_title(csv_path.stem)
         ax.set_aspect("equal")
     for ax in axes.ravel()[len(csv_paths) :]:
         ax.axis("off")
     fig.suptitle("End paths after projected-gradient ascent", fontsize=13)
+    add_horizon_colorbar(fig, marker_mappable, axes.ravel().tolist())
     fig.savefig(output_pdf)
     plt.close(fig)
 
@@ -251,6 +272,7 @@ def plot_gradient_snapshots(
         constrained_layout=True,
         squeeze=False,
     )
+    marker_mappable = None
     for ax, iteration in zip(axes.ravel(), selected_iterations):
         frame = trajectory[trajectory["iteration"] == iteration].sort_values("horizon")
         coords = add_simplex_coordinates(frame)
@@ -270,11 +292,13 @@ def plot_gradient_snapshots(
             s=30,
             zorder=4,
         )
+        marker_mappable = add_horizon_markers(ax, coords, size=22)
         ax.set_title(f"iteration {iteration}")
         ax.set_aspect("equal")
     for ax in axes.ravel()[len(selected_iterations) :]:
         ax.axis("off")
     fig.suptitle("Best gradient-ascent path snapshots", fontsize=13)
+    add_horizon_colorbar(fig, marker_mappable, axes.ravel().tolist())
     fig.savefig(output_pdf)
     plt.close(fig)
 
