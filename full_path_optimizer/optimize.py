@@ -29,6 +29,7 @@ from core import (
     select_exact_horizon_one,
     weights_to_frame,
 )
+from make_plots import plot_optimization_traces, plot_start_paths
 from simulate_glide_path import DEFAULT_SEED
 
 
@@ -45,6 +46,11 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=SCRIPT_DIR / "outputs",
+    )
+    parser.add_argument(
+        "--plot-dir",
+        type=Path,
+        default=SCRIPT_DIR / "plots" / "gradient_ascent",
     )
     return parser.parse_args()
 
@@ -181,14 +187,26 @@ def main() -> None:
 
     summary = pd.DataFrame(results).sort_values("canonical_objective", ascending=False)
     summary.to_csv(args.output_dir / "optimization_start_summary.csv", index=False)
-    pd.concat(traces, ignore_index=True).to_csv(
-        args.output_dir / "optimization_traces.csv", index=False
-    )
+    traces_csv = args.output_dir / "optimization_traces.csv"
+    pd.concat(traces, ignore_index=True).to_csv(traces_csv, index=False)
 
     best_frame = weights_to_frame(best_weights)
-    best_frame.to_csv(args.output_dir / "gradient_path.csv", index=False)
+    gradient_path_csv = args.output_dir / "gradient_path.csv"
+    best_frame.to_csv(gradient_path_csv, index=False)
+    args.plot_dir.mkdir(parents=True, exist_ok=True)
+    trace_plot = args.plot_dir / "optimization_traces.pdf"
+    start_paths_plot = args.plot_dir / "start_paths.pdf"
+    plot_optimization_traces(traces_csv, trace_plot)
+    plot_start_paths(
+        start_paths_dir,
+        gradient_path_csv,
+        start_paths_plot,
+        candidate_label="best gradient path",
+    )
     print(f"\nbest start: {best_name}, canonical objective {best_score:.6f}")
-    print(f"wrote {args.output_dir / 'gradient_path.csv'}")
+    print(f"wrote {gradient_path_csv}")
+    print(f"wrote {trace_plot}")
+    print(f"wrote {start_paths_plot}")
 
 
 if __name__ == "__main__":

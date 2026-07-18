@@ -1,8 +1,7 @@
-"""Diagnostic plots for the full-path glide-path optimizer."""
+"""Shared plotting helpers for the full-path glide-path optimizer."""
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import matplotlib
@@ -14,7 +13,6 @@ import pandas as pd
 
 from core import (
     PROJECT_ROOT,
-    SCRIPT_DIR,
     WEIGHT_COLUMNS,
     frame_to_weights,
     load_asset_return_matrix,
@@ -23,32 +21,12 @@ from core import (
     weights_to_frame,
 )
 from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
-from simulate_glide_path import DEFAULT_SEED
 
 PATH_COLORS = {
     "optimized": "#1f77b4",
     "greedy": "black",
     "bisected": "#d95f02",
 }
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", default="from_1927")
-    parser.add_argument("--num-simulations", type=int, default=20_000)
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument(
-        "--path-csv",
-        type=Path,
-        default=SCRIPT_DIR / "outputs" / "polished_path.csv",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=SCRIPT_DIR / "plots",
-    )
-    return parser.parse_args()
-
 
 def load_strategies(dataset: str, path_csv: Path) -> dict[str, pd.DataFrame]:
     strategies = {"optimized": pd.read_csv(path_csv)}
@@ -131,6 +109,7 @@ def plot_per_horizon_scores(
     num_simulations: int,
     seed: int,
     output_pdf: Path,
+    reference_strategy: str = "optimized",
 ) -> None:
     asset_returns = load_asset_return_matrix(dataset)
     path_returns = make_shared_path_returns(dataset, num_simulations, seed=seed)
@@ -147,10 +126,10 @@ def plot_per_horizon_scores(
             linewidth=2.0,
             label=f"{name} (mean {scores.mean():.4f})",
         )
-        if name == "optimized":
+        if name == reference_strategy:
             reference = scores
     for name, frame in strategies.items():
-        if name == "optimized" or reference is None:
+        if name == reference_strategy or reference is None:
             continue
         weights = frame_to_weights(frame)
         scores = per_horizon_scores(path_returns, weights, asset_returns)
@@ -160,15 +139,20 @@ def plot_per_horizon_scores(
             scores - reference,
             color=PATH_COLORS.get(name, "gray"),
             linewidth=2.0,
-            label=f"{name} - optimized",
+            label=f"{name} - {reference_strategy}",
         )
-    axes[1].axhline(0.0, color="#1f77b4", linewidth=1.2)
     axes[0].set_title("Per-horizon worst-4% mean")
-    axes[1].set_title("Difference vs optimized path")
+    if reference is None:
+        axes[1].axis("off")
+    else:
+        axes[1].axhline(0.0, color="#1f77b4", linewidth=1.2)
+        axes[1].set_title(f"Difference vs {reference_strategy} path")
     for ax in axes:
         ax.set_xlabel("Horizon")
         ax.grid(alpha=0.25)
-        ax.legend(frameon=False)
+        handles, _ = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(frameon=False)
     axes[0].set_ylabel("Worst-4% mean (annualized)")
     fig.savefig(output_pdf)
     plt.close(fig)
@@ -190,7 +174,12 @@ def plot_optimization_traces(traces_csv: Path, output_pdf: Path) -> None:
     plt.close(fig)
 
 
-def plot_start_paths(start_paths_dir: Path, candidate_csv: Path, output_pdf: Path) -> None:
+def plot_start_paths(
+    start_paths_dir: Path,
+    candidate_csv: Path,
+    output_pdf: Path,
+    candidate_label: str = "final",
+) -> None:
     if not start_paths_dir.exists():
         return
     fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
@@ -210,7 +199,7 @@ def plot_start_paths(start_paths_dir: Path, candidate_csv: Path, output_pdf: Pat
         coords["simplex_y"],
         color="black",
         linewidth=2.4,
-        label="final (polished)",
+        label=candidate_label,
     )
     ax.set_title("Solutions from every optimization start")
     ax.legend(frameon=False, fontsize=8, loc="upper left")
@@ -263,40 +252,3 @@ def plot_out_of_sample(oos_csv: Path, output_pdf: Path) -> None:
     ax.legend(frameon=False)
     fig.savefig(output_pdf)
     plt.close(fig)
-
-
-def main() -> None:
-    args = parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    outputs = SCRIPT_DIR / "outputs"
-
-    strategies = load_strategies(args.dataset, args.path_csv)
-    plot_simplex_paths(strategies, args.output_dir / "simplex_paths.pdf")
-    plot_weights_by_horizon(
-        strategies["optimized"], args.output_dir / "optimized_weights_by_horizon.pdf"
-    )
-    plot_per_horizon_scores(
-        strategies,
-        args.dataset,
-        args.num_simulations,
-        args.seed,
-        args.output_dir / "per_horizon_scores.pdf",
-    )
-    plot_optimization_traces(
-        outputs / "optimization_traces.csv", args.output_dir / "optimization_traces.pdf"
-    )
-    plot_start_paths(
-        outputs / "start_paths", args.path_csv, args.output_dir / "start_paths.pdf"
-    )
-    plot_perturbations(
-        outputs / "perturbation_tests.csv", args.output_dir / "perturbation_tests.pdf"
-    )
-    plot_out_of_sample(
-        outputs / "out_of_sample_scores.csv", args.output_dir / "out_of_sample.pdf"
-    )
-    for pdf in sorted(args.output_dir.glob("*.pdf")):
-        print(f"wrote {pdf}")
-
-
-if __name__ == "__main__":
-    main()

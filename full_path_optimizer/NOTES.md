@@ -23,10 +23,10 @@ the whole path can be optimized at once:
    projection, horizon 1 held at the exact empirical anchor) from 8 starts:
    linear-to-stocks, constant anchor, the existing greedy and bisected paths,
    and 4 random Dirichlet paths. (`optimize.py`)
-2. **Exact coordinate ascent over the 2% grid** (Gauss–Seidel: for each
-   horizon, try all 1,326 grid portfolios holding the rest of the path fixed,
-   apply improvements immediately, repeat until no swap gains more than 5e-8).
-   (`grid_certificate.py --polish`)
+2. **Local coordinate ascent over the 2% grid** (Gauss-Seidel: for each
+   horizon, try nearby grid portfolios holding the rest of the path fixed,
+   apply improvements immediately, repeat until a sweep-level gain threshold
+   is reached). (`grid_certificate.py`)
 
 The analytic gradient is verified against finite differences in
 `check_gradient.py` (max relative error ~2e-5, consistent with tail-set ties).
@@ -44,7 +44,7 @@ independent evaluation seeds, and the greedy path by ~7.7e-3. ("Canonical
 objective" = mean across horizons of worst-4% means, exact empirical anchor at
 horizon 1, matching `evaluate_greedy_algorithm/compare_alternative_paths.py`.)
 
-Path shape (`plots/optimized_weights_by_horizon.pdf`): from the anchored
+Path shape (`plots/coordinate_ascent/optimized_weights_by_horizon.pdf`): from the anchored
 0/24/76 stocks/bonds/T-bills at horizon 1, stocks ramp quickly to ~50% by
 horizon 4 and plateau near 65–70% stocks / 30–35% bonds from horizon ~15 on,
 with T-bills essentially gone beyond horizon ~12 and a mild drift back toward
@@ -52,18 +52,17 @@ bonds at the longest horizons.
 
 ## Why you should believe this is (essentially) the global optimum
 
-1. **Coordinate-wise grid certificate** (`outputs/grid_certificate.csv`):
-   after polishing, replacing any single horizon's weights with *any* of the
-   1,326 grid portfolios — anywhere on the simplex, not just locally —
-   improves the objective by at most **+2.2e-8**. The path is coordinate-wise
-   optimal over the full 2% grid at every horizon.
+1. **Coordinate-wise grid polish** (`outputs/coordinate_polish_trace.csv`):
+   after gradient ascent, replacing single horizons with nearby 2% grid
+   portfolios gives only tiny accepted gains by the final sweep. The path is
+   locally coordinate-wise polished on the grid.
 2. **400 random perturbation tests** (`outputs/perturbation_tests.csv`,
-   `plots/perturbation_tests.pdf`): smooth full-path and single-horizon
+   `plots/validation/perturbation_tests.pdf`): smooth full-path and single-horizon
    perturbations at magnitudes 0.01–0.10; mean effect is negative at every
    magnitude and increasingly so with size; the largest "gain" is +5e-7
    (tail-tie noise, ~3 orders of magnitude below seed-to-seed variation).
 3. **Multi-start agreement on objective value**
-   (`outputs/optimization_start_summary.csv`, `plots/start_paths.pdf`): all
+   (`outputs/optimization_start_summary.csv`, `plots/gradient_ascent/start_paths.pdf`): all
    four informed starts and two of four random starts converge to
    -0.0009…-0.0021 (sim objective) before polishing; two random starts land
    in visibly worse basins (-0.005), which is exactly why the grid
@@ -73,7 +72,7 @@ bonds at the longest horizons.
    20% contraction/extension, linearization, bonds/T-bills swap, and
    linear-to-100%-stocks all score worse (deltas -3e-4 to -1.4e-2).
 5. **No meaningful Monte-Carlo overfitting**
-   (`outputs/out_of_sample_scores.csv`, `plots/out_of_sample.pdf`): the path
+   (`outputs/out_of_sample_scores.csv`, `plots/validation/out_of_sample.pdf`): the path
    was tuned on one seed; on five never-used seeds it remains best by a
    near-constant margin. Re-running the full grid polish *against an
    independent seed* (seed 311) improves that seed's objective by only
@@ -85,7 +84,7 @@ bonds at the longest horizons.
 ## Smoothing: considered, quantified, not needed
 
 The optimal path is mildly jagged in the mid-horizons
-(`plots/simplex_paths.pdf`) because the objective surface is extremely flat
+(`plots/coordinate_ascent/simplex_paths.pdf`) because the objective surface is extremely flat
 there (see perturbation table: magnitude-0.05 smooth perturbations cost only
 ~5e-5 on average). Moving-average smoothing of the path costs, both in-sample
 and on fresh seeds consistently:
@@ -107,7 +106,7 @@ under the current-dataset-only constraint).
 
 ## A deliberate property worth knowing about
 
-Per-horizon scores (`plots/per_horizon_scores.pdf`, right panel): greedy and
+Per-horizon scores (`plots/validation/per_horizon_scores.pdf`, right panel): greedy and
 bisected actually *beat* the optimized path at horizons 2–4 (by up to ~0.01),
 while the optimized path wins at every horizon from ~6 outward (by ~1e-3 vs.
 bisected, ~1e-2 vs. greedy). Because short-horizon weights are traversed by
@@ -122,15 +121,24 @@ fix is to reweight horizons in the objective (a one-line change in
 - `core.py` — data loading, shared-path generation (same RNG stream as the
   greedy script), vectorized objective, analytic CVaR subgradient.
 - `check_gradient.py` — finite-difference gradient verification.
-- `score_baselines.py` — canonical scores for the existing greedy/bisected paths.
+- `score_baselines.py` — canonical scores and baseline plots for the existing
+  greedy/bisected paths.
 - `optimize.py` — multi-start projected Adam; writes `outputs/gradient_path.csv`,
-  per-start solutions to `outputs/start_paths/`, and traces.
-- `grid_certificate.py` — full-grid coordinate sweep; `--polish` runs exact
-  grid coordinate ascent first. Writes `outputs/polished_path.csv` (the final
-  recommended path) and `outputs/grid_certificate.csv`.
+  per-start solutions to `outputs/start_paths/`, traces, and gradient-ascent plots.
+- `grid_certificate.py` — local grid coordinate ascent. Writes
+  `outputs/polished_path.csv` (the final recommended path), polish diagnostics,
+  and coordinate-ascent plots.
 - `validate.py` — heuristic alternatives, perturbation tests, multi-start
-  dispersion, out-of-sample seeds.
-- `make_plots.py` — all plots into `plots/`.
+  dispersion, out-of-sample seeds, and validation plots.
+- `make_plots.py` — shared plotting helpers used by the stage scripts; it is not
+  a standalone "produce every plot" entry point.
+
+Plot directories are organized by pipeline stage:
+
+- `plots/baseline/`
+- `plots/gradient_ascent/`
+- `plots/coordinate_ascent/`
+- `plots/validation/`
 
 Reproduction order:
 
@@ -138,9 +146,8 @@ Reproduction order:
 uv run python check_gradient.py
 uv run python score_baselines.py
 uv run python optimize.py
-uv run python grid_certificate.py --polish --path-csv outputs/gradient_path.csv
+uv run python grid_certificate.py --path-csv outputs/gradient_path.csv
 uv run python validate.py
-uv run python make_plots.py
 ```
 
 Runtimes (this machine): optimize ~30 min, polish+certificate ~75 min,

@@ -239,9 +239,10 @@ Recent implementation changes:
   distance `0.25` by default.
 - A polishing run stops after a full horizon sweep when the total accepted
   objective gain is less than `10 * improvement_tolerance`.
-- The script writes polish trace/replacement diagnostics and two plots: the
-  objective trace over potential replacements and a density plot of realized
-  replacement distances.
+- Full-path plots are stage-owned instead of produced by a final global plotting
+  script: baseline plots go to `full_path_optimizer/plots/baseline/`, gradient
+  diagnostics to `plots/gradient_ascent/`, coordinate-polish/final-path plots to
+  `plots/coordinate_ascent/`, and validation plots to `plots/validation/`.
 
 Important caution:
 

@@ -33,6 +33,12 @@ from core import (
     project_path_to_simplex,
     weights_to_frame,
 )
+from make_plots import (
+    load_strategies,
+    plot_out_of_sample,
+    plot_per_horizon_scores,
+    plot_perturbations,
+)
 from simulate_glide_path import DEFAULT_SEED
 
 sys.path.insert(0, str(PROJECT_ROOT / "evaluate_greedy_algorithm"))
@@ -63,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=SCRIPT_DIR / "outputs",
+    )
+    parser.add_argument(
+        "--plot-dir",
+        type=Path,
+        default=SCRIPT_DIR / "plots" / "validation",
     )
     return parser.parse_args()
 
@@ -222,7 +233,9 @@ def main() -> None:
     oos = out_of_sample(
         args.dataset, args.num_simulations, args.oos_seeds, strategies, asset_returns
     )
-    oos.to_csv(args.output_dir / "out_of_sample_scores.csv", index=False)
+    perturbations_csv = args.output_dir / "perturbation_tests.csv"
+    out_of_sample_csv = args.output_dir / "out_of_sample_scores.csv"
+    oos.to_csv(out_of_sample_csv, index=False)
     print("\nout-of-sample objectives by seed:")
     print(
         oos.pivot(index="seed", columns="path_name", values="objective").to_string(
@@ -236,6 +249,23 @@ def main() -> None:
         .sort_values(ascending=False)
         .to_string(float_format="{:.6f}".format)
     )
+    args.plot_dir.mkdir(parents=True, exist_ok=True)
+    strategies_for_plots = load_strategies(args.dataset, args.path_csv)
+    per_horizon_plot = args.plot_dir / "per_horizon_scores.pdf"
+    perturbations_plot = args.plot_dir / "perturbation_tests.pdf"
+    out_of_sample_plot = args.plot_dir / "out_of_sample.pdf"
+    plot_per_horizon_scores(
+        strategies_for_plots,
+        args.dataset,
+        args.num_simulations,
+        args.seed,
+        per_horizon_plot,
+    )
+    plot_perturbations(perturbations_csv, perturbations_plot)
+    plot_out_of_sample(out_of_sample_csv, out_of_sample_plot)
+    print(f"\nwrote {per_horizon_plot}")
+    print(f"wrote {perturbations_plot}")
+    print(f"wrote {out_of_sample_plot}")
 
 
 if __name__ == "__main__":

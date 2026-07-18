@@ -29,6 +29,7 @@ from core import (
     terminal_log_growth_matrix,
     weights_to_frame,
 )
+from make_plots import load_strategies, plot_simplex_paths, plot_weights_by_horizon
 from portfolio_helpers import generate_portfolio_weights
 from simulate_glide_path import DEFAULT_SEED
 
@@ -82,7 +83,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plot-dir",
         type=Path,
-        default=SCRIPT_DIR / "plots",
+        default=SCRIPT_DIR / "plots" / "coordinate_ascent",
     )
     return parser.parse_args()
 
@@ -335,8 +336,13 @@ def main() -> None:
     args.plot_dir.mkdir(parents=True, exist_ok=True)
     objective_plot = args.plot_dir / "coordinate_polish_objective.pdf"
     distance_plot = args.plot_dir / "coordinate_replacement_distance_density.pdf"
+    simplex_plot = args.plot_dir / "simplex_paths.pdf"
+    weights_plot = args.plot_dir / "optimized_weights_by_horizon.pdf"
     plot_polish_trace(trace, objective_plot)
     plot_replacement_distances(replacements, distance_plot)
+    strategies = load_strategies(args.dataset, args.polished_csv)
+    plot_simplex_paths(strategies, simplex_plot)
+    plot_weights_by_horizon(strategies["optimized"], weights_plot)
     print(f"wrote {args.polish_trace_csv}", flush=True)
     print(f"wrote {args.replacement_csv}", flush=True)
     print(f"wrote {objective_plot}", flush=True)
@@ -347,6 +353,8 @@ def main() -> None:
             "no accepted replacements; skipped replacement distance plot",
             flush=True,
         )
+    print(f"wrote {simplex_plot}", flush=True)
+    print(f"wrote {weights_plot}", flush=True)
 
     final_objective = path_objective(path_returns, weights, asset_returns)
     print(f"final canonical objective: {final_objective:.6f}", flush=True)
