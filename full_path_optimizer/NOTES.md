@@ -62,8 +62,8 @@ bonds at the longest horizons.
    magnitude and increasingly so with size; the largest "gain" is +5e-7
    (tail-tie noise, ~3 orders of magnitude below seed-to-seed variation).
 3. **Multi-start agreement on objective value**
-   (`outputs/optimization_start_summary.csv`, `plots/gradient_ascent/start_paths.pdf`): all
-   four informed starts and two of four random starts converge to
+   (`outputs/optimization_start_summary.csv`, `plots/gradient_ascent/end_paths.pdf`):
+   all four informed starts and two of four random starts converge to
    -0.0009…-0.0021 (sim objective) before polishing; two random starts land
    in visibly worse basins (-0.005), which is exactly why the grid
    certificate matters — the final path survives a search over every grid
@@ -124,7 +124,10 @@ fix is to reweight horizons in the objective (a one-line change in
 - `score_baselines.py` — canonical scores and baseline plots for the existing
   greedy/bisected paths.
 - `optimize.py` — multi-start projected Adam; writes `outputs/gradient_path.csv`,
-  per-start solutions to `outputs/start_paths/`, traces, and gradient-ascent plots.
+  per-start end solutions to `outputs/start_paths/`, per-start trajectories to
+  `outputs/gradient_trajectories/`, traces, and gradient-ascent plots including
+  `plots/gradient_ascent/end_paths.pdf` and
+  `plots/gradient_ascent/best_path_snapshots.pdf`.
 - `grid_certificate.py` — local grid coordinate ascent. Writes
   `outputs/polished_path.csv` (the final recommended path), polish diagnostics,
   and coordinate-ascent plots.

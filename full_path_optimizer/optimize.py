@@ -29,7 +29,7 @@ from core import (
     select_exact_horizon_one,
     weights_to_frame,
 )
-from make_plots import plot_optimization_traces, plot_start_paths
+from make_plots import plot_end_paths, plot_gradient_snapshots, plot_optimization_traces
 from simulate_glide_path import DEFAULT_SEED
 
 
@@ -89,7 +89,7 @@ def optimize_from_start(
     horizon_one: np.ndarray,
     iterations: int,
     learning_rate: float,
-) -> tuple[np.ndarray, list[float]]:
+) -> tuple[np.ndarray, list[float], list[pd.DataFrame]]:
     """Projected Adam ascent; horizon-1 row is held fixed."""
     weights = initial_weights.copy()
     weights[0] = horizon_one
@@ -101,6 +101,7 @@ def optimize_from_start(
     best_weights = weights.copy()
     best_objective = -np.inf
     trace: list[float] = []
+    trajectory = [weights_to_frame(weights).assign(iteration=0)]
 
     for step in range(1, iterations + 1):
         objective, gradient, _ = objective_and_gradient(path_returns, weights)
@@ -121,6 +122,7 @@ def optimize_from_start(
         )
         weights = project_path_to_simplex(weights)
         weights[0] = horizon_one
+        trajectory.append(weights_to_frame(weights).assign(iteration=step))
 
     # Final evaluation to allow the last iterate to win.
     objective, _, _ = objective_and_gradient(path_returns, weights)
@@ -129,7 +131,7 @@ def optimize_from_start(
         best_objective = objective
         best_weights = weights.copy()
 
-    return best_weights, trace
+    return best_weights, trace, trajectory
 
 
 def main() -> None:
@@ -147,13 +149,15 @@ def main() -> None:
 
     start_paths_dir = args.output_dir / "start_paths"
     start_paths_dir.mkdir(parents=True, exist_ok=True)
+    trajectories_dir = args.output_dir / "gradient_trajectories"
+    trajectories_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
     traces = []
     best_name, best_weights, best_score = None, None, -np.inf
     for name, initial_weights in starts.items():
         began = time.time()
-        weights, trace = optimize_from_start(
+        weights, trace, trajectory = optimize_from_start(
             path_returns=path_returns,
             initial_weights=project_path_to_simplex(initial_weights),
             horizon_one=horizon_one,
@@ -178,6 +182,9 @@ def main() -> None:
             )
         )
         weights_to_frame(weights).to_csv(start_paths_dir / f"{name}.csv", index=False)
+        pd.concat(trajectory, ignore_index=True).to_csv(
+            trajectories_dir / f"{name}.csv", index=False
+        )
         print(
             f"{name}: sim objective {trace[0]:.6f} -> {max(trace):.6f}, "
             f"canonical {canonical:.6f} ({elapsed:.0f}s)"
@@ -195,18 +202,16 @@ def main() -> None:
     best_frame.to_csv(gradient_path_csv, index=False)
     args.plot_dir.mkdir(parents=True, exist_ok=True)
     trace_plot = args.plot_dir / "optimization_traces.pdf"
-    start_paths_plot = args.plot_dir / "start_paths.pdf"
+    end_paths_plot = args.plot_dir / "end_paths.pdf"
+    snapshots_plot = args.plot_dir / "best_path_snapshots.pdf"
     plot_optimization_traces(traces_csv, trace_plot)
-    plot_start_paths(
-        start_paths_dir,
-        gradient_path_csv,
-        start_paths_plot,
-        candidate_label="best gradient path",
-    )
+    plot_end_paths(start_paths_dir, end_paths_plot)
+    plot_gradient_snapshots(trajectories_dir / f"{best_name}.csv", snapshots_plot)
     print(f"\nbest start: {best_name}, canonical objective {best_score:.6f}")
     print(f"wrote {gradient_path_csv}")
     print(f"wrote {trace_plot}")
-    print(f"wrote {start_paths_plot}")
+    print(f"wrote {end_paths_plot}")
+    print(f"wrote {snapshots_plot}")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ PATH_COLORS = {
     "bisected": "#d95f02",
 }
 
+
 def load_strategies(dataset: str, path_csv: Path) -> dict[str, pd.DataFrame]:
     strategies = {"optimized": pd.read_csv(path_csv)}
     for name, relative in {
@@ -174,36 +175,106 @@ def plot_optimization_traces(traces_csv: Path, output_pdf: Path) -> None:
     plt.close(fig)
 
 
-def plot_start_paths(
-    start_paths_dir: Path,
-    candidate_csv: Path,
-    output_pdf: Path,
-    candidate_label: str = "final",
-) -> None:
+def plot_end_paths(start_paths_dir: Path, output_pdf: Path, columns: int = 3) -> None:
     if not start_paths_dir.exists():
         return
-    fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
-    draw_simplex_outline(ax)
-    for csv_path in sorted(start_paths_dir.glob("*.csv")):
+    csv_paths = sorted(start_paths_dir.glob("*.csv"))
+    if not csv_paths:
+        return
+    rows = int(np.ceil(len(csv_paths) / columns))
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(columns * 4.2, rows * 3.9),
+        constrained_layout=True,
+        squeeze=False,
+    )
+    for ax, csv_path in zip(axes.ravel(), csv_paths):
+        draw_simplex_outline(ax)
         coords = add_simplex_coordinates(pd.read_csv(csv_path).sort_values("horizon"))
         ax.plot(
             coords["simplex_x"],
             coords["simplex_y"],
-            linewidth=1.2,
-            alpha=0.65,
-            label=csv_path.stem,
+            color=PATH_COLORS.get(csv_path.stem, "#1f77b4"),
+            linewidth=2.0,
+            alpha=0.9,
         )
-    coords = add_simplex_coordinates(pd.read_csv(candidate_csv).sort_values("horizon"))
-    ax.plot(
-        coords["simplex_x"],
-        coords["simplex_y"],
-        color="black",
-        linewidth=2.4,
-        label=candidate_label,
+        ax.scatter(
+            coords["simplex_x"].iloc[0],
+            coords["simplex_y"].iloc[0],
+            color=PATH_COLORS.get(csv_path.stem, "#1f77b4"),
+            marker="s",
+            s=30,
+            zorder=4,
+        )
+        for marker_horizon in (10, 20, 30, 40):
+            row = coords[coords["horizon"] == marker_horizon]
+            if len(row):
+                ax.scatter(
+                    row["simplex_x"],
+                    row["simplex_y"],
+                    color=PATH_COLORS.get(csv_path.stem, "#1f77b4"),
+                    marker="o",
+                    s=14,
+                    zorder=4,
+                )
+        ax.set_title(csv_path.stem)
+        ax.set_aspect("equal")
+    for ax in axes.ravel()[len(csv_paths) :]:
+        ax.axis("off")
+    fig.suptitle("End paths after projected-gradient ascent", fontsize=13)
+    fig.savefig(output_pdf)
+    plt.close(fig)
+
+
+def plot_gradient_snapshots(
+    trajectory_csv: Path,
+    output_pdf: Path,
+    snapshots: int = 9,
+) -> None:
+    if not trajectory_csv.exists():
+        return
+    trajectory = pd.read_csv(trajectory_csv)
+    iterations = sorted(trajectory["iteration"].unique())
+    if not iterations:
+        return
+    selected_indexes = np.linspace(0, len(iterations) - 1, snapshots)
+    selected_iterations = [iterations[int(round(index))] for index in selected_indexes]
+    selected_iterations = list(dict.fromkeys(selected_iterations))
+
+    columns = 3
+    rows = int(np.ceil(len(selected_iterations) / columns))
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(columns * 4.2, rows * 3.9),
+        constrained_layout=True,
+        squeeze=False,
     )
-    ax.set_title("Solutions from every optimization start")
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
-    ax.set_aspect("equal")
+    for ax, iteration in zip(axes.ravel(), selected_iterations):
+        frame = trajectory[trajectory["iteration"] == iteration].sort_values("horizon")
+        coords = add_simplex_coordinates(frame)
+        draw_simplex_outline(ax)
+        ax.plot(
+            coords["simplex_x"],
+            coords["simplex_y"],
+            color="#1f77b4",
+            linewidth=2.0,
+            alpha=0.9,
+        )
+        ax.scatter(
+            coords["simplex_x"].iloc[0],
+            coords["simplex_y"].iloc[0],
+            color="#1f77b4",
+            marker="s",
+            s=30,
+            zorder=4,
+        )
+        ax.set_title(f"iteration {iteration}")
+        ax.set_aspect("equal")
+    for ax in axes.ravel()[len(selected_iterations) :]:
+        ax.axis("off")
+    fig.suptitle("Best gradient-ascent path snapshots", fontsize=13)
     fig.savefig(output_pdf)
     plt.close(fig)
 
