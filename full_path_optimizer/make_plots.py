@@ -13,8 +13,10 @@ import numpy as np
 import pandas as pd
 
 from core import (
+    DEFAULT_HORIZON_50_WEIGHT_RATIO,
     PROJECT_ROOT,
     WEIGHT_COLUMNS,
+    exponential_horizon_weights,
     frame_to_weights,
     load_asset_return_matrix,
     make_shared_path_returns,
@@ -140,21 +142,29 @@ def plot_per_horizon_scores(
     seed: int,
     output_pdf: Path,
     reference_strategy: str = "optimized",
+    horizon_50_weight_ratio: float = DEFAULT_HORIZON_50_WEIGHT_RATIO,
 ) -> None:
     asset_returns = load_asset_return_matrix(dataset)
     path_returns = make_shared_path_returns(dataset, num_simulations, seed=seed)
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.2), constrained_layout=True)
     reference = None
+    horizon_weights = None
     for name, frame in strategies.items():
         weights = frame_to_weights(frame)
         scores = per_horizon_scores(path_returns, weights, asset_returns)
         horizons = np.arange(1, len(scores) + 1)
+        if horizon_weights is None:
+            horizon_weights = exponential_horizon_weights(
+                len(scores),
+                horizon_50_weight_ratio,
+            )
+        weighted_objective = float(np.mean(scores * horizon_weights))
         axes[0].plot(
             horizons,
             scores,
             color=PATH_COLORS.get(name, "gray"),
             linewidth=2.0,
-            label=f"{name} (mean {scores.mean():.4f})",
+            label=f"{name} (weighted {weighted_objective:.4f})",
         )
         if name == reference_strategy:
             reference = scores

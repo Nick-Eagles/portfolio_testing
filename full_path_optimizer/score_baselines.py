@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from core import (
+    DEFAULT_HORIZON_50_WEIGHT_RATIO,
     PROJECT_ROOT,
     SCRIPT_DIR,
     WEIGHT_COLUMNS,
@@ -27,6 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=DATASET)
     parser.add_argument("--num-simulations", type=int, default=NUM_SIMULATIONS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--horizon-50-weight-ratio",
+        type=float,
+        default=DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    )
     parser.add_argument(
         "--plot-dir",
         type=Path,
@@ -55,7 +61,12 @@ def main() -> None:
         frame = pd.read_parquet(parquet_path)
         strategies[name] = frame[["horizon", *WEIGHT_COLUMNS]]
         weights = frame_to_weights(frame)
-        score = path_objective(path_returns, weights, asset_returns)
+        score = path_objective(
+            path_returns,
+            weights,
+            asset_returns,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
         scores = per_horizon_scores(path_returns, weights, asset_returns)
         print(
             f"{name}: objective={score:.6f} "
@@ -74,6 +85,7 @@ def main() -> None:
             args.seed,
             per_horizon_plot,
             reference_strategy="bisected" if "bisected" in strategies else "greedy",
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
         )
         print(f"wrote {simplex_plot}")
         print(f"wrote {per_horizon_plot}")

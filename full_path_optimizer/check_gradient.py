@@ -3,9 +3,10 @@
 import numpy as np
 
 from core import (
+    DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    exponential_horizon_weights,
     make_shared_path_returns,
     objective_and_gradient,
-    path_objective,
     project_path_to_simplex,
 )
 
@@ -42,7 +43,11 @@ def _sim_only_objective(path_returns: np.ndarray, weights: np.ndarray) -> float:
     from core import per_horizon_scores
 
     scores = per_horizon_scores(path_returns, weights)
-    return float(scores[1:].mean())
+    horizon_weights = exponential_horizon_weights(
+        len(scores),
+        DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    )
+    return float(np.sum(scores[1:] * horizon_weights[1:]) / len(scores))
 
 
 if __name__ == "__main__":

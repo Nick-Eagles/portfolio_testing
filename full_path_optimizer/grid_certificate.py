@@ -18,11 +18,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from core import (
+    DEFAULT_HORIZON_50_WEIGHT_RATIO,
     MAX_HORIZON,
     SCRIPT_DIR,
     WEIGHT_COLUMNS,
     WORST_TAIL_FRACTION,
     frame_to_weights,
+    exponential_horizon_weights,
     load_asset_return_matrix,
     make_shared_path_returns,
     path_objective,
@@ -39,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="from_1927")
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--horizon-50-weight-ratio",
+        type=float,
+        default=DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    )
     parser.add_argument(
         "--path-csv",
         type=Path,
@@ -95,6 +102,7 @@ def sweep_horizon(
     candidate_matrix: np.ndarray,
     horizon: int,
     tail_count: int,
+    horizon_weights: np.ndarray,
 ) -> np.ndarray:
     """Total (summed) tail-mean change across horizons >= `horizon` for every
     candidate replacement of the weights at `horizon`. Shape (num_candidates,)."""
@@ -115,7 +123,7 @@ def sweep_horizon(
         base_annualized = np.exp(log_growth[:, affected - 1] / affected) - 1
         base_partitioned = np.partition(base_annualized, tail_count - 1)
         base_tail_mean = base_partitioned[:tail_count].mean()
-        deltas += tail_means - base_tail_mean
+        deltas += (tail_means - base_tail_mean) * horizon_weights[affected - 1]
     return deltas
 
 
@@ -212,6 +220,8 @@ def local_candidate_matrix(
 
 def main() -> None:
     args = parse_args()
+    if args.horizon_50_weight_ratio <= 0:
+        raise ValueError("--horizon-50-weight-ratio must be positive.")
     asset_returns = load_asset_return_matrix(args.dataset)
     path_returns = make_shared_path_returns(
         args.dataset, args.num_simulations, seed=args.seed
@@ -219,7 +229,16 @@ def main() -> None:
     weights = frame_to_weights(pd.read_csv(args.path_csv))
     candidate_matrix = generate_portfolio_weights()[WEIGHT_COLUMNS].to_numpy(dtype=float)
 
-    base_objective = path_objective(path_returns, weights, asset_returns)
+    horizon_weights = exponential_horizon_weights(
+        MAX_HORIZON,
+        args.horizon_50_weight_ratio,
+    )
+    base_objective = path_objective(
+        path_returns,
+        weights,
+        asset_returns,
+        horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+    )
     print(f"base canonical objective: {base_objective:.6f}", flush=True)
 
     # Gauss-Seidel coordinate ascent: apply improvements immediately.
@@ -252,7 +271,7 @@ def main() -> None:
                 )
             deltas = sweep_horizon(
                 path_returns, log_growth, weights, local_candidates,
-                horizon, tail_count,
+                horizon, tail_count, horizon_weights,
             )
             best_index = int(np.argmax(deltas))
             best_delta_objective = float(deltas[best_index] / MAX_HORIZON)
@@ -319,7 +338,12 @@ def main() -> None:
                 f"objective {current_objective:.6f}",
                 flush=True,
             )
-        objective = path_objective(path_returns, weights, asset_returns)
+        objective = path_objective(
+            path_returns,
+            weights,
+            asset_returns,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
         current_objective = objective
         weights_to_frame(weights).to_csv(args.polished_csv, index=False)
         print(
@@ -356,7 +380,12 @@ def main() -> None:
     print(f"wrote {simplex_plot}", flush=True)
     print(f"wrote {weights_plot}", flush=True)
 
-    final_objective = path_objective(path_returns, weights, asset_returns)
+    final_objective = path_objective(
+        path_returns,
+        weights,
+        asset_returns,
+        horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+    )
     print(f"final canonical objective: {final_objective:.6f}", flush=True)
     weights_to_frame(weights).to_csv(args.polished_csv, index=False)
     print(f"wrote {args.polished_csv}", flush=True)

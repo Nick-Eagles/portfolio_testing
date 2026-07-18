@@ -10,14 +10,16 @@ but writes only inside this directory.
 
 ## The key idea
 
-The objective — the mean across horizons 1–50 of each horizon's worst-4% mean
-of annualized outcomes, evaluated on a *fixed* set of block-bootstrap paths
-(common random numbers, same construction and default seed as
-`simulate_glide_path.py`) — is a **deterministic, piecewise-smooth function of
-the full 50x3 weight matrix**. Worst-tail means are CVaR-style functions with
-a simple subgradient: the average of the outcome gradients over the current
-worst-4% set at each horizon. So instead of greedy or bisection heuristics,
-the whole path can be optimized at once:
+The objective — a weighted mean across horizons 1–50 of each horizon's
+worst-4% mean of annualized outcomes, evaluated on a *fixed* set of
+block-bootstrap paths (common random numbers, same construction and default
+seed as `simulate_glide_path.py`) — is a **deterministic, piecewise-smooth
+function of the full 50x3 weight matrix**. Horizon weights follow an
+exponential decay, normalized to average 1, with horizon 50 defaulting to 1/8
+of horizon 1's weight. Worst-tail means are CVaR-style functions with a simple
+subgradient: the average of the outcome gradients over the current worst-4%
+set at each horizon, scaled by that horizon's objective weight. So instead of
+greedy or bisection heuristics, the whole path can be optimized at once:
 
 1. **Multi-start projected (sub)gradient ascent** (Adam + row-wise simplex
    projection, horizon 1 held at the exact empirical anchor) from 8 starts:
@@ -129,7 +131,8 @@ fix is to reweight horizons in the objective (a one-line change in
   `plots/gradient_ascent/end_paths.pdf` and
   `plots/gradient_ascent/best_path_snapshots.pdf`. It also supports an
   experimental `--smooth --smoothing-strength <value>` mode that applies gentle
-  convex horizon smoothing between gradient-ascent steps.
+  convex horizon smoothing between gradient-ascent steps, plus
+  `--horizon-50-weight-ratio` for the exponential horizon objective weights.
 - `grid_certificate.py` — local grid coordinate ascent. Writes
   `outputs/polished_path.csv` (the final recommended path), polish diagnostics,
   and coordinate-ascent plots.

@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from core import (
+    DEFAULT_HORIZON_50_WEIGHT_RATIO,
     MAX_HORIZON,
     PROJECT_ROOT,
     SCRIPT_DIR,
@@ -40,6 +41,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--learning-rate", type=float, default=0.02)
+    parser.add_argument(
+        "--horizon-50-weight-ratio",
+        type=float,
+        default=DEFAULT_HORIZON_50_WEIGHT_RATIO,
+        help=(
+            "Exponential horizon-weight ratio: horizon 50 weight divided by "
+            "horizon 1 weight. Weights are normalized to average 1."
+        ),
+    )
     parser.add_argument("--random-starts", type=int, default=4)
     parser.add_argument("--start-seed", type=int, default=6217)
     parser.add_argument(
@@ -154,6 +164,7 @@ def optimize_from_start(
     horizon_one: np.ndarray,
     iterations: int,
     learning_rate: float,
+    horizon_50_weight_ratio: float,
     smooth: bool,
     smoothing_strength: float,
 ) -> tuple[np.ndarray, list[float], list[pd.DataFrame]]:
@@ -171,7 +182,11 @@ def optimize_from_start(
     trajectory = [weights_to_frame(weights).assign(iteration=0)]
 
     for step in range(1, iterations + 1):
-        objective, gradient, _ = objective_and_gradient(path_returns, weights)
+        objective, gradient, _ = objective_and_gradient(
+            path_returns,
+            weights,
+            horizon_50_weight_ratio=horizon_50_weight_ratio,
+        )
         trace.append(objective)
         if objective > best_objective:
             best_objective = objective
@@ -198,7 +213,11 @@ def optimize_from_start(
         trajectory.append(weights_to_frame(weights).assign(iteration=step))
 
     # Final evaluation to allow the last iterate to win.
-    objective, _, _ = objective_and_gradient(path_returns, weights)
+    objective, _, _ = objective_and_gradient(
+        path_returns,
+        weights,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+    )
     trace.append(objective)
     if objective > best_objective:
         best_objective = objective
@@ -211,6 +230,8 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.smoothing_strength <= 1:
         raise ValueError("--smoothing-strength must be between 0 and 1.")
+    if args.horizon_50_weight_ratio <= 0:
+        raise ValueError("--horizon-50-weight-ratio must be positive.")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     asset_returns = load_asset_return_matrix(args.dataset)
@@ -238,10 +259,16 @@ def main() -> None:
             horizon_one=horizon_one,
             iterations=args.iterations,
             learning_rate=args.learning_rate,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
             smooth=args.smooth,
             smoothing_strength=args.smoothing_strength,
         )
-        canonical = path_objective(path_returns, weights, asset_returns)
+        canonical = path_objective(
+            path_returns,
+            weights,
+            asset_returns,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
         elapsed = time.time() - began
         results.append(
             {

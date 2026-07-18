@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from core import (
+    DEFAULT_HORIZON_50_WEIGHT_RATIO,
     MAX_HORIZON,
     PROJECT_ROOT,
     SCRIPT_DIR,
@@ -52,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="from_1927")
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--horizon-50-weight-ratio",
+        type=float,
+        default=DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    )
     parser.add_argument(
         "--path-csv",
         type=Path,
@@ -97,8 +103,14 @@ def perturbation_tests(
     weights: np.ndarray,
     num_perturbations: int,
     rng: np.random.Generator,
+    horizon_50_weight_ratio: float,
 ) -> pd.DataFrame:
-    base = path_objective(path_returns, weights, asset_returns)
+    base = path_objective(
+        path_returns,
+        weights,
+        asset_returns,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+    )
     magnitudes = [0.01, 0.02, 0.05, 0.10]
     rows = []
     for index in range(num_perturbations):
@@ -114,7 +126,12 @@ def perturbation_tests(
             direction[horizon - 1] = step / np.abs(step).max()
         perturbed = project_path_to_simplex(weights + magnitude * direction)
         perturbed[0] = weights[0]  # keep the anchored horizon 1
-        score = path_objective(path_returns, perturbed, asset_returns)
+        score = path_objective(
+            path_returns,
+            perturbed,
+            asset_returns,
+            horizon_50_weight_ratio=horizon_50_weight_ratio,
+        )
         rows.append(
             {
                 "kind": kind,
@@ -129,13 +146,24 @@ def heuristic_alternatives(
     path_returns: np.ndarray,
     asset_returns: np.ndarray,
     weights: np.ndarray,
+    horizon_50_weight_ratio: float,
 ) -> pd.DataFrame:
     frame = weights_to_frame(weights)
-    base = path_objective(path_returns, weights, asset_returns)
+    base = path_objective(
+        path_returns,
+        weights,
+        asset_returns,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+    )
     rows = [{"path_name": "candidate", "objective": base, "delta": 0.0}]
     for name, alternative in generate_glide_alternative_paths(frame).items():
         alt_weights = frame_to_weights(alternative)
-        score = path_objective(path_returns, alt_weights, asset_returns)
+        score = path_objective(
+            path_returns,
+            alt_weights,
+            asset_returns,
+            horizon_50_weight_ratio=horizon_50_weight_ratio,
+        )
         rows.append({"path_name": name, "objective": score, "delta": score - base})
     return pd.DataFrame(rows)
 
@@ -161,6 +189,7 @@ def out_of_sample(
     seeds: list[int],
     strategies: dict[str, np.ndarray],
     asset_returns: np.ndarray,
+    horizon_50_weight_ratio: float,
 ) -> pd.DataFrame:
     rows = []
     for seed in seeds:
@@ -170,7 +199,12 @@ def out_of_sample(
                 {
                     "seed": seed,
                     "path_name": name,
-                    "objective": path_objective(path_returns, weights, asset_returns),
+                    "objective": path_objective(
+                        path_returns,
+                        weights,
+                        asset_returns,
+                        horizon_50_weight_ratio=horizon_50_weight_ratio,
+                    ),
                 }
             )
     return pd.DataFrame(rows)
@@ -178,6 +212,8 @@ def out_of_sample(
 
 def main() -> None:
     args = parse_args()
+    if args.horizon_50_weight_ratio <= 0:
+        raise ValueError("--horizon-50-weight-ratio must be positive.")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     asset_returns = load_asset_return_matrix(args.dataset)
     path_returns = make_shared_path_returns(
@@ -185,11 +221,21 @@ def main() -> None:
     )
     weights = frame_to_weights(pd.read_csv(args.path_csv))
 
-    base = path_objective(path_returns, weights, asset_returns)
+    base = path_objective(
+        path_returns,
+        weights,
+        asset_returns,
+        horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+    )
     print(f"candidate in-sample canonical objective: {base:.6f}\n")
 
     # 1. Existing heuristics.
-    heuristics = heuristic_alternatives(path_returns, asset_returns, weights)
+    heuristics = heuristic_alternatives(
+        path_returns,
+        asset_returns,
+        weights,
+        args.horizon_50_weight_ratio,
+    )
     heuristics.to_csv(args.output_dir / "heuristic_alternatives.csv", index=False)
     print("heuristic alternatives (delta vs candidate, should all be negative):")
     print(heuristics.to_string(index=False, float_format="{:.6f}".format))
@@ -197,7 +243,12 @@ def main() -> None:
     # 2. Perturbation tests.
     rng = np.random.default_rng(args.perturbation_seed)
     perturbations = perturbation_tests(
-        path_returns, asset_returns, weights, args.num_perturbations, rng
+        path_returns,
+        asset_returns,
+        weights,
+        args.num_perturbations,
+        rng,
+        args.horizon_50_weight_ratio,
     )
     perturbations.to_csv(args.output_dir / "perturbation_tests.csv", index=False)
     improving = perturbations[perturbations["delta_objective"] > 0]
@@ -231,7 +282,12 @@ def main() -> None:
             strategies[name] = frame_to_weights(pd.read_parquet(parquet_path))
 
     oos = out_of_sample(
-        args.dataset, args.num_simulations, args.oos_seeds, strategies, asset_returns
+        args.dataset,
+        args.num_simulations,
+        args.oos_seeds,
+        strategies,
+        asset_returns,
+        args.horizon_50_weight_ratio,
     )
     perturbations_csv = args.output_dir / "perturbation_tests.csv"
     out_of_sample_csv = args.output_dir / "out_of_sample_scores.csv"
@@ -260,6 +316,7 @@ def main() -> None:
         args.num_simulations,
         args.seed,
         per_horizon_plot,
+        horizon_50_weight_ratio=args.horizon_50_weight_ratio,
     )
     plot_perturbations(perturbations_csv, perturbations_plot)
     plot_out_of_sample(out_of_sample_csv, out_of_sample_plot)

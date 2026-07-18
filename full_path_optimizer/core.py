@@ -42,6 +42,7 @@ from simulate_returns import (
 MAX_HORIZON = 50
 WORST_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
+DEFAULT_HORIZON_50_WEIGHT_RATIO = 1 / 8
 
 
 def load_asset_return_matrix(dataset: str) -> np.ndarray:
@@ -123,16 +124,36 @@ def per_horizon_scores(
     return scores
 
 
+def exponential_horizon_weights(
+    max_horizon: int,
+    horizon_50_weight_ratio: float = DEFAULT_HORIZON_50_WEIGHT_RATIO,
+) -> np.ndarray:
+    """Exponential horizon weights, normalized to average 1 across all horizons."""
+    if max_horizon < 1:
+        raise ValueError("max_horizon must be at least 1.")
+    if horizon_50_weight_ratio <= 0:
+        raise ValueError("horizon_50_weight_ratio must be positive.")
+
+    horizons = np.arange(1, max_horizon + 1, dtype=float)
+    decay = np.log(horizon_50_weight_ratio) / (MAX_HORIZON - 1)
+    weights = np.exp(decay * (horizons - 1))
+    return weights / weights.mean()
+
+
 def path_objective(
     path_returns: np.ndarray,
     weights: np.ndarray,
     asset_returns: np.ndarray | None = None,
     tail_fraction: float = WORST_TAIL_FRACTION,
+    horizon_50_weight_ratio: float = DEFAULT_HORIZON_50_WEIGHT_RATIO,
 ) -> float:
-    """Mean across horizons of the per-horizon worst-tail means."""
-    return float(
-        per_horizon_scores(path_returns, weights, asset_returns, tail_fraction).mean()
+    """Weighted mean across horizons of the per-horizon worst-tail means."""
+    scores = per_horizon_scores(path_returns, weights, asset_returns, tail_fraction)
+    horizon_weights = exponential_horizon_weights(
+        len(scores),
+        horizon_50_weight_ratio,
     )
+    return float(np.mean(scores * horizon_weights))
 
 
 def objective_and_gradient(
@@ -140,11 +161,12 @@ def objective_and_gradient(
     weights: np.ndarray,
     tail_fraction: float = WORST_TAIL_FRACTION,
     min_horizon: int = 2,
+    horizon_50_weight_ratio: float = DEFAULT_HORIZON_50_WEIGHT_RATIO,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     """Simulation-only objective and its subgradient with respect to weights.
 
     Returns (objective, gradient, per_horizon_scores). The objective is the
-    mean across horizons `min_horizon..max_horizon` of the per-horizon
+    weighted mean across horizons `min_horizon..max_horizon` of the per-horizon
     worst-tail means (horizon 1 is normally anchored/fixed, so it is excluded
     by default). The gradient has shape (max_horizon, 3); rows for horizons
     below `min_horizon` are only reached through longer-horizon terms.
@@ -155,7 +177,11 @@ def objective_and_gradient(
 
     gradient = np.zeros_like(weights)
     scores = np.empty(max_horizon, dtype=float)
-    horizon_weight = 1.0 / (max_horizon - min_horizon + 1)
+    horizon_weights = exponential_horizon_weights(
+        max_horizon,
+        horizon_50_weight_ratio,
+    )
+    objective_denominator = max_horizon
 
     for horizon in range(1, max_horizon + 1):
         column = log_growth[:, horizon - 1]
@@ -168,14 +194,17 @@ def objective_and_gradient(
 
         # d(annualized)/d(log growth) for each tail simulation.
         outer_scale = np.exp(tail_log_growth / horizon) / (horizon * tail_count)
-        scaled = outer_scale * horizon_weight
+        scaled = outer_scale * horizon_weights[horizon - 1] / objective_denominator
         for h in range(1, horizon + 1):
             year_offset = horizon - h
             tail_returns = path_returns[tail_indexes, year_offset, :]
             denominator = 1.0 + tail_returns @ weights[h - 1]
             gradient[h - 1] += (scaled / denominator) @ tail_returns
 
-    objective = float(scores[min_horizon - 1 :].mean())
+    objective = float(
+        np.sum(scores[min_horizon - 1 :] * horizon_weights[min_horizon - 1 :])
+        / objective_denominator
+    )
     return objective, gradient, scores
 
 
