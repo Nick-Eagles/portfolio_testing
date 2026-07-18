@@ -44,6 +44,23 @@ The glide path work should not be described as settled, final, or clearly superi
 
 The retirement arm is still a research arm, but the major annual-contribution issue has been resolved. Its current implementation is coherent enough to use for comparisons and minor follow-up tweaks.
 
+## Documentation Maintenance
+
+As of July 2026, `.agents/AGENTS.md` and `agent_notes.md` have intentionally
+different roles:
+
+- `.agents/AGENTS.md` should stay short. It should contain core project goals,
+  the active project arms, and brief descriptions of major shared design
+  choices.
+- `agent_notes.md` is the lab notebook. It can preserve experimental history,
+  details of things tried, what worked, what failed, and nuanced context that
+  would make `AGENTS.md` too long.
+- When asked to update both files, prefer putting only critical orientation in
+  `AGENTS.md` and putting details here. Use pointers from `AGENTS.md` to deeper
+  notes or topic-specific docs rather than duplicating long explanations.
+- `AGENTS.md` should mention that this lab notebook exists, but should not tell
+  agents to read it automatically unless the user asks.
+
 ## Shared Modeling Choices
 
 The rolling-window approach existed earlier and was helpful for exploration, but it has been removed from the repo. Stationary circular resampling was judged better because it produces many more synthetic paths while preserving contiguous historical interactions among the assets.
@@ -185,6 +202,59 @@ Plotting diagnostics:
 Current caution:
 
 The bisected optimizer is still experimental and may not be the final algorithm. It is useful for studying path-level behavior and regularization, but its objective, local search geometry, and regularization strength are still being tuned.
+
+### Full-Path Glide Path Optimizer
+
+A newer `full_path_optimizer/` arm was added after the greedy and bisected
+glide-path work. This is now a substantial alternate approach rather than just a
+small variant.
+
+High-level idea:
+
+- Freeze a shared set of bootstrap paths first, so the path objective becomes a
+  deterministic, piecewise-smooth function of the full 50x3 weight matrix.
+- Optimize the entire path at once using projected gradient ascent with horizon
+  1 anchored to the exact empirical one-year downside optimum.
+- Polish the result with coordinate ascent over nearby 2% grid portfolios.
+- Treat the polished path as the final candidate for that run.
+
+Why gradient ascent is plausible here:
+
+- With common random numbers, the simulator is not noisy from one objective
+  call to the next.
+- Terminal log growth and annualized outcomes are differentiable in the weights
+  as long as the underlying simulated return paths are fixed.
+- The worst-tail mean is not globally smooth, but between tail-set changes it
+  has a simple CVaR-style subgradient: average the outcome gradients over the
+  current worst-tail simulations.
+
+Recent implementation changes:
+
+- `full_path_optimizer/grid_certificate.py` has shifted away from being a final
+  exhaustive certificate script.
+- Its core behavior is now local coordinate polishing. The old `--polish` flag
+  was dropped; polishing always runs.
+- The final full-grid certificate sweep after polishing was dropped.
+- Polishing only checks candidate replacements within Euclidean portfolio-space
+  distance `0.25` by default.
+- A polishing run stops after a full horizon sweep when the total accepted
+  objective gain is less than `10 * improvement_tolerance`.
+- The script writes polish trace/replacement diagnostics and two plots: the
+  objective trace over potential replacements and a density plot of realized
+  replacement distances.
+
+Important caution:
+
+- The user is specifically investigating whether local coordinate replacements
+  dominate. The distance diagnostics were added because a full 1,326-point
+  search at every horizon may be unnecessary if accepted replacements are local.
+- Some generated output files may reflect interrupted exploratory runs. When in
+  doubt, rerun from `outputs/gradient_path.csv` with the current script and
+  inspect the diagnostic CSVs.
+
+Detailed rationale, results, and validation live in
+`full_path_optimizer/NOTES.md`; prefer updating that file for full-path-specific
+details rather than expanding `AGENTS.md`.
 
 ## Convergence Diagnostics
 

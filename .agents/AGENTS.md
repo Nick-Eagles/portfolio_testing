@@ -1,62 +1,87 @@
 # Project Context for Agents
 
-This repo is a Python/uv project for studying portfolio returns across three broad asset classes:
+This repo is a Python/uv project for studying portfolio returns across three
+broad asset classes: US stocks, US bonds, and Treasury bills.
 
-- US stocks
-- US bonds
-- Treasury bills
+The project goal is to produce data-driven but simple recommendations for how
+someone should invest based on how much time they have left. The user cares
+about clarity, path stability, near-optimal regions, and whether added modeling
+complexity is genuinely useful.
 
-The project vision has not changed: produce a data-driven recommendation for how someone should invest given how much time they have left, using simple asset classes and aiming for simple takeaways.
+Use `uv run python ...` for scripts and one-off analysis.
 
-The repo currently has three components:
+## Documentation Roles
 
-- A fixed-portfolio approach, where one portfolio is held for the full horizon and optimized across horizons.
-- A glide path approach, where the recommended portfolio may change as the horizon changes.
-- A retirement approach, where the project studies accumulation through age 65, withdrawals from age 66 through age 90, and comparisons against external target-date-style glide paths.
+This file should stay concise. It is for core goals, project arms, and short
+descriptions of major shared design choices.
 
-The glide path work is still experimental. Do not describe it as final or clearly superior. It is a serious line of work, but the user is still testing whether it leads to better recommendations or simply more complexity.
+`agent_notes.md` is the longer lab notebook. It can record experiments, what
+worked, what failed, and detailed working context. Mention it when relevant, but
+do not instruct future agents to read it automatically unless the user asks.
 
-The retirement work is also experimental, but the major contribution-timing issue has been resolved. Treat it as a usable research arm rather than a finished recommendation engine.
+When the user asks to update `.agents/AGENTS.md` and `agent_notes.md`, the
+intended split is:
 
-## Core Data
+- Keep `.agents/AGENTS.md` short and critical.
+- Put detailed experimental history and nuanced findings in `agent_notes.md`.
+- Avoid duplicating long explanations across both files.
+- Add pointers from `AGENTS.md` to deeper docs when a topic has its own notes.
 
-The source workbook is `data/Backtest-Portfolio-returns-rev25c.xlsx`. The relevant sheet is `Data_Series`.
+## Data
 
-The extracted real return columns are read from the `Inflation-adjusted` section:
+Source workbook: `data/Backtest-Portfolio-returns-rev25c.xlsx`
+
+Relevant sheet: `Data_Series`
+
+Read the workbook with `engine="calamine"`; `openpyxl` had stylesheet issues.
+
+The project uses real, inflation-adjusted returns:
 
 - `TSM (US)` -> `us_stocks_real_return_pct`
 - `TBM (US)` -> `us_bonds_real_return_pct`
 - `T-Bills TR` -> `treasury_bills_real_return_pct`
 
-`T-Bills TR` is intentional. It replaced the plain `T-Bill` series because the user wants the cash-like asset to behave more like an ultra-short-duration T-bill fund or HYSA proxy.
+`T-Bills TR` is intentional. It replaced the plain `T-Bill` series because the
+cash-like asset should behave more like an ultra-short-duration T-bill fund or
+HYSA proxy.
 
-Use `engine="calamine"` when reading the workbook. `openpyxl` had trouble with the workbook stylesheet.
-
-The project supports two dataset variants:
+Dataset variants:
 
 - `full_history`: 1871-2025
 - `from_1927`: 1927-2025
 
-Outputs are stored under dataset folders:
+Canonical output roots:
 
 - `data/<dataset>/`
 - `plots/<dataset>/`
 
-## Shared Simulation Design
+## Shared Modeling Choices
 
-Portfolio weights use a deterministic 2% grid over the 3-asset simplex, giving 1,326 portfolios. This replaced earlier random Dirichlet sampling because the grid is reproducible, evenly covers the simplex, and avoids sampling gaps.
+Portfolio weights use a deterministic 2% grid over the 3-asset simplex, giving
+1,326 portfolios. This replaced random Dirichlet sampling because the grid is
+reproducible and evenly covers the simplex.
 
-Portfolios use annual rebalancing. In code, each year's portfolio return is the dot product of that year's asset returns and the target weights for that year.
+Portfolio simulations use annual rebalancing. Each year's portfolio return is
+the dot product of that year's asset returns and that year's target weights.
 
 Horizons are integer years from 1 to 50.
 
-The main simulation workflow uses stationary circular resampling. For a block length `L`, a synthetic path starts at a random historical year, continues to the next year with probability `1 - 1/L`, otherwise jumps to a new random year, and wraps circularly through the historical data as needed. The same simulated paths are used across candidate portfolios within a given run so cross-asset interactions are preserved.
+The main simulation workflow uses stationary circular block resampling. A path
+starts at a random historical year, continues to the next year with probability
+`1 - 1/L`, otherwise jumps to a new random year, and wraps circularly through
+the historical data. Candidate portfolios in a run share the same simulated
+paths so comparisons use common random numbers.
 
-The rolling-window workflow was an earlier stage of the project and has been discarded.
+The rolling-window workflow was an earlier exploration path and has been
+discarded.
 
-## Fixed-Portfolio Component
+## Project Arms
 
-This is the older, more established component. It evaluates fixed portfolios over full horizons and then smooths the resulting surfaces before selecting an optimal path.
+### Fixed-Portfolio Arm
+
+This is the older, more established baseline. It evaluates fixed portfolios
+over full horizons, then smooths the resulting portfolio/horizon surfaces before
+selecting an optimal path.
 
 Primary scripts:
 
@@ -66,55 +91,47 @@ Primary scripts:
 - `plot_smoothed_optimal_path.py`
 - `convex_smoothing.py`
 
-Primary raw outputs:
-
-- `data/<dataset>/portfolio_return_summary.parquet`
-- `data/<dataset>/portfolio_return_summary_checkpoints.parquet`
-
 Important context:
 
-- This component was originally built around lower-tail quantiles, especially `q02`.
-- Smoothing over portfolios and horizons became an important part of making the fixed-portfolio surfaces interpretable and path-stable.
-- The project learned a lot from this arm about block bootstrapping, horizon-1 edge cases, and how noisy raw lower-tail surfaces can be.
+- This arm was originally built around lower-tail quantiles, especially `q02`.
+- Smoothing across horizons and the simplex is important for interpretability.
+- Horizon 1 needs exact empirical handling because the sample is small.
 
-## Glide Path Component
+### Glide-Path Arm
 
-This is the newer experimental component. It tries to recommend a year-by-year or horizon-by-horizon portfolio path rather than assuming one fixed portfolio must be held for the full horizon.
+This arm tries to recommend a horizon-by-horizon portfolio path rather than a
+single fixed portfolio per horizon. It is substantial and promising, but still
+experimental; do not describe it as final or clearly superior.
 
-Primary scripts:
+Greedy and bisected approaches:
 
-- `simulate_glide_path.py`
-- `plot_glide_path.py`
-- `simulate_bisected_glide_path.py`
-- `plot_bisected_glide_path.py`
+- `simulate_glide_path.py` implements the main greedy/local search path.
+- `simulate_bisected_glide_path.py` explores a path-level bisection strategy.
+- `plot_glide_path.py` and `plot_bisected_glide_path.py` plot those outputs.
 
-Primary outputs:
+Important shared context:
 
-- `data/<dataset>/glide_path/glide_path_candidate_summary.parquet`
-- `data/<dataset>/glide_path/glide_path.parquet`
-- `data/<dataset>/glide_path/glide_path_metadata.csv`
-- `data/<dataset>/glide_path/glide_path_candidate_summary_checkpoints.parquet`
+- The current downside objective is usually `worst_4pct_mean`: the mean
+  annualized return among the worst 4% of outcomes.
+- Horizon 1 is anchored using exact empirical one-year outcomes.
+- Neighborhood-limited search and projected continuation are used to reduce
+  noise and cost.
 
-Important context:
+Full-path optimizer:
 
-- The main glide path script currently uses block length `10`.
-- The optimization objective is now the mean of the worst 4% of annualized outcomes, `worst_4pct_mean`, rather than `q02`.
-- That objective is currently considered an improvement over `q02` for this work because it produces smoother surfaces and is less sensitive to tiny cutoff noise.
-- Horizon 1 is anchored using the exact empirical mean of the worst 4% of observed one-year outcomes. In the 99-year `from_1927` sample, that means the worst 4 years.
-- The main glide path script no longer supports portfolio smoothing. Path-distance and path-direction regularization are off by default unless explicitly requested.
-- After horizon 1, the main glide path script limits candidates to a local simplex-coordinate neighborhood around the previously selected shorter-horizon portfolio. The default candidate radius is `0.10`.
-- The current main glide path script uses same-direction/same-distance projected continuation when scoring candidates. The default is `4` projection steps. Projected weights are projected back to the simplex and snapped to the nearest grid portfolio.
-- Portfolio smoothing was removed from the glide path arm because it is no longer practical with neighborhood-limited candidate search, and the `worst_4pct_mean` surfaces did not show local cross-portfolio spikes that needed smoothing even with lookahead.
-- There is also a newer experimental alternative to the greedy glide-path algorithm. It optimizes a piecewise-linear path by repeatedly bisecting control points, testing local hexagonal candidate lattices, and scoring full path outcomes. Treat this as a research experiment, not as the replacement for the main glide-path script.
+- `full_path_optimizer/` is a newer, substantial glide-path approach that builds
+  on lessons from the greedy and bisected algorithms.
+- It treats the whole 50x3 path as the optimization object, uses fixed bootstrap
+  paths/common random numbers, performs projected gradient ascent, then applies
+  local coordinate polishing.
+- See `full_path_optimizer/NOTES.md` for the detailed rationale, results, and
+  validation notes rather than duplicating that material here.
 
-## Retirement Component
+### Retirement Arm
 
-This is the newest experimental component. It adapts ideas from both the fixed-portfolio and glide-path arms to model a retirement lifecycle:
-
-- starting ages run from 20 through 90
-- retirement is assumed at age 65
-- withdrawals begin at the start of age 66
-- withdrawals are fixed in real terms after an initial withdrawal equal to 3.5% of the age-65 balance
+This arm models accumulation through retirement and withdrawals after
+retirement. It is experimental, but coherent enough for comparisons and
+follow-up tweaks.
 
 Primary scripts:
 
@@ -122,41 +139,40 @@ Primary scripts:
 - `plot_retirement_glide_path.py`
 - `plot_retirement_withdrawal_sweep.py`
 - `external_comparisons/compare_retirement_glide_paths.py`
-
-Primary outputs:
-
-- `data/<dataset>/retirement/retirement_candidate_summary.parquet`
-- `data/<dataset>/retirement/retirement_path.parquet`
-- `data/<dataset>/retirement/retirement_metadata.csv`
-- `plots/<dataset>/retirement/`
-
-External comparison inputs live in `external_comparisons/` and include approximate Vanguard and Fidelity glide paths over the same three asset classes.
+- `external_comparisons/plot_external_glide_paths.py`
 
 Important context:
 
-- The post-retirement block currently chooses a fixed portfolio by maximizing the mean terminal wealth ratio among the worst 2% of paths.
-- The pre-retirement greedy path currently optimizes the mean of the worst 4% of path outcomes.
-- Pre-retirement scoring uses annual contributions, an estimated age-specific contribution scale, and an XIRR-to-age-65 metric multiplied by the post-retirement terminal wealth ratio.
-- The annual contribution scale is estimated from a no-contribution reference path, then applied during the final contribution-aware greedy pass so later ages are not treated as fresh zero-balance accounts.
-- The pre-retirement search uses same-direction/same-distance projection lookahead and a neighborhood-limited candidate set around the next older selected portfolio.
-- The external comparison script compares the project path against approximate Vanguard and Fidelity paths, and includes a random-path sanity check for pre-retirement comparisons.
+- Retirement is assumed at age 65.
+- Withdrawals begin at age 66 and are fixed in real terms.
+- The default first withdrawal is 3.5% of the age-65 balance.
+- The major annual-contribution timing issue has been resolved; older runs
+  before that fix should be interpreted cautiously.
+- External comparison paths approximate Vanguard and Fidelity target-date-style
+  glide paths over the same three asset classes.
 
-## Important Scripts
+## Shared Utilities
 
-- `dataset_variants.py`: shared dataset metadata and canonical paths.
-- `portfolio_helpers.py`: shared return-column definitions, horizon constant, and deterministic 2% simplex grid generation.
-- `build_asset_class_returns.py`: extracts clean asset-return CSVs and growth-of-$1 line plots.
-- `q02_diff_density.py`: convergence diagnostics that can compare checkpoint summaries against larger runs and now also supports the glide path arm and the newer downside metric.
+- `dataset_variants.py`: dataset metadata and canonical paths.
+- `portfolio_helpers.py`: shared return columns, horizon constants, and the 2%
+  simplex grid.
+- `build_asset_class_returns.py`: asset-return extraction and growth plots.
+- `q02_diff_density.py`: convergence diagnostics for fixed and glide-path arms,
+  including newer downside metrics beyond `q02`.
 
 ## Interpretation Notes
 
-Do not over-interpret one optimal point when nearby portfolios perform similarly.
+Do not over-interpret one optimal point when nearby portfolios perform
+similarly.
 
-The user cares about:
+The user especially cares about:
 
-- recommendations that are data-driven but simple to explain
-- how much value bonds add compared with a no-bonds alternative
-- path stability and whether the recommendation changes smoothly with horizon
-- whether an apparent improvement is real or just an artifact of noise, smoothing, or regularization
+- whether bonds add value compared with no-bonds alternatives
+- whether paths are stable and explainable
+- whether improvements are real or artifacts of noise, smoothing, or
+  regularization
+- whether extra modeling machinery makes the recommendation better or just more
+  complex
 
-Generated CSVs, gzipped CSVs, parquet files, temporary files, and Excel files under `data/` are ignored by git.
+Generated CSVs, gzipped CSVs, parquet files, temporary files, and Excel files
+under `data/` are ignored by git.
