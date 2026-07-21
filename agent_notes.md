@@ -215,8 +215,9 @@ High-level idea:
   deterministic, piecewise-smooth function of the full 50x3 weight matrix.
 - Optimize the entire path at once using projected gradient ascent with horizon
   1 anchored to the exact empirical one-year downside optimum.
-- Polish the result with coordinate ascent over nearby 2% grid portfolios.
-- Treat the polished path as the final candidate for that run.
+- Optionally apply convex smoothing between gradient-ascent iterations.
+- Coordinate polishing over nearby 2% grid portfolios still exists, but should
+  be treated skeptically rather than as the default "final improvement" step.
 
 Why gradient ascent is plausible here:
 
@@ -243,12 +244,36 @@ Recent implementation changes:
   script: baseline plots go to `full_path_optimizer/plots/baseline/`, gradient
   diagnostics to `plots/gradient_ascent/`, coordinate-polish/final-path plots to
   `plots/coordinate_ascent/`, and validation plots to `plots/validation/`.
+- Gradient-ascent plots now include faceted `end_paths.pdf` and
+  `best_path_snapshots.pdf`; simplex plots mark horizon multiples of 10 with a
+  viridis scale.
+- `optimize.py --smooth --smoothing-strength ...` applies an experimental
+  convex horizon smoother between gradient steps. It smooths the stock curve
+  first, rescales bonds/T-bills proportionally, then smooths the bond curve and
+  adjusts T-bills.
 
 Important caution:
 
-- The user is specifically investigating whether local coordinate replacements
-  dominate. The distance diagnostics were added because a full 1,326-point
-  search at every horizon may be unnecessary if accepted replacements are local.
+- Recent experiments increased concern that coordinate ascent/polishing may
+  hyper-fit limited historical data and produce less plausible paths than the
+  gradient-ascent outputs, even when it improves the in-sample objective.
+- Convex smoothing between gradient-ascent steps looked more promising: it made
+  final paths and objective scores more similar across starting paths, making
+  the landscape look more convex/stable.
+- A one-off smoothing of the already-polished path showed that much of the
+  jaggedness has tiny objective value: smoothing strength `0.25` worsened the
+  canonical objective by about `2.4e-5`, and strength `0.5` by about `6.9e-5`.
+- Leave-one-historical-chunk-out block bootstrapping and uneven horizon
+  objective weights were tried as robustness/regularization ideas but were not
+  convincing and were reverted.
+- A temporary 70-horizon smoothed optimization was also tried to see whether
+  stocks eventually dominate at long enough horizons; it still plateaued around
+  58-60% stocks near horizons 50-70, so this did not support the "stocks should
+  eventually dominate" intuition under that setup.
+- The main current concern is variability in the maxima found by gradient
+  ascent across starts. Future work should prioritize better initialization,
+  multi-start design, or lower-dimensional smooth path parameterizations before
+  spending more effort on coordinate polishing.
 - Some generated output files may reflect interrupted exploratory runs. When in
   doubt, rerun from `outputs/gradient_path.csv` with the current script and
   inspect the diagnostic CSVs.

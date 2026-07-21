@@ -122,8 +122,15 @@ Full-path optimizer:
 - `full_path_optimizer/` is a newer, substantial glide-path approach that builds
   on lessons from the greedy and bisected algorithms.
 - It treats the whole 50x3 path as the optimization object, uses fixed bootstrap
-  paths/common random numbers, performs projected gradient ascent, then applies
-  local coordinate polishing.
+  paths/common random numbers, and performs projected gradient ascent. Convex
+  smoothing between gradient steps is an active experimental stabilizer.
+- Coordinate polishing exists, but recent exploratory work made it look more
+  like a historical-data overfitting step than a source of more plausible paths;
+  do not treat the polished path as automatically preferable to the
+  gradient-ascent output.
+- The main current concern is variability in maxima found from different starts,
+  suggesting initialization/multi-start design may matter more than additional
+  local polishing.
 - See `full_path_optimizer/NOTES.md` for the detailed rationale, results, and
   validation notes rather than duplicating that material here.
 
