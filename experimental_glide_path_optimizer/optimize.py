@@ -70,6 +70,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument(
+        "--smooth",
+        action="store_true",
+        help="Apply experimental convex horizon smoothing between gradient steps.",
+    )
+    parser.add_argument(
+        "--smoothing-strength",
+        type=float,
+        default=0.1,
+        help=(
+            "Convex smoothing weight for each interior horizon when --smooth is set. "
+            "0 leaves the path unchanged; 1 replaces each interior value with the "
+            "average of its neighboring horizons. Default is intentionally gentle."
+        ),
+    )
+    parser.add_argument(
         "--horizon-50-weight-ratio",
         type=float,
         default=DEFAULT_HORIZON_50_WEIGHT_RATIO,
@@ -141,6 +156,56 @@ def generate_simplex_grid(step: float) -> pd.DataFrame:
                     }
                 )
     return pd.DataFrame(rows)
+
+
+def smooth_curve_with_fixed_endpoints(values: np.ndarray, strength: float) -> np.ndarray:
+    if not 0 <= strength <= 1:
+        raise ValueError("--smoothing-strength must be between 0 and 1.")
+    smoothed = values.copy()
+    if len(values) <= 2 or strength == 0:
+        return smoothed
+    neighbor_average = 0.5 * (values[:-2] + values[2:])
+    smoothed[1:-1] = (1 - strength) * values[1:-1] + strength * neighbor_average
+    return smoothed
+
+
+def rescale_bonds_and_bills_after_stock_smoothing(
+    weights: np.ndarray,
+    smoothed_stock: np.ndarray,
+) -> np.ndarray:
+    result = weights.copy()
+    remaining = 1 - smoothed_stock
+    bond_bill_total = weights[:, 1] + weights[:, 2]
+    has_proportions = bond_bill_total > 1e-12
+    result[:, 0] = smoothed_stock
+    result[has_proportions, 1] = (
+        weights[has_proportions, 1] / bond_bill_total[has_proportions]
+    ) * remaining[has_proportions]
+    result[has_proportions, 2] = (
+        weights[has_proportions, 2] / bond_bill_total[has_proportions]
+    ) * remaining[has_proportions]
+    result[~has_proportions, 1] = 0.0
+    result[~has_proportions, 2] = remaining[~has_proportions]
+    return result
+
+
+def smooth_path_between_gradient_steps(
+    weights: np.ndarray,
+    horizon_one: np.ndarray,
+    strength: float,
+) -> np.ndarray:
+    """Sequential convex horizon smoothing with simplex-preserving adjustments."""
+    smoothed_stock = smooth_curve_with_fixed_endpoints(weights[:, 0], strength)
+    result = rescale_bonds_and_bills_after_stock_smoothing(weights, smoothed_stock)
+
+    smoothed_bond = smooth_curve_with_fixed_endpoints(result[:, 1], strength)
+    result[:, 1] = np.minimum(smoothed_bond, 1 - result[:, 0])
+    result[:, 2] = 1 - result[:, 0] - result[:, 1]
+    result = np.clip(result, 0.0, 1.0)
+    result = project_path_to_simplex(result)
+    result[0] = horizon_one
+    result[-1] = weights[-1]
+    return result
 
 
 def interpolate_control_points(control_points: dict[int, np.ndarray]) -> np.ndarray:
@@ -392,6 +457,8 @@ def optimize_control_points(
     steps: int,
     learning_rate: float,
     horizon_50_weight_ratio: float,
+    smooth: bool,
+    smoothing_strength: float,
     iteration: int,
     starting_step: int,
 ) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int]:
@@ -433,6 +500,15 @@ def optimize_control_points(
         )
         values = project_path_to_simplex(values)
         values[fixed_mask] = control_points[1]
+        if smooth:
+            smoothed_full_path = smooth_path_between_gradient_steps(
+                jacobian @ values,
+                control_points[1],
+                smoothing_strength,
+            )
+            values = smoothed_full_path[np.array(control_horizons) - 1]
+            values = project_path_to_simplex(values)
+            values[fixed_mask] = control_points[1]
 
         global_step += 1
         updated_full_path = jacobian @ values
@@ -449,6 +525,8 @@ def optimize_control_points(
                 "objective_before_step": objective,
                 "objective": updated_objective,
                 "control_point_count": len(control_horizons),
+                "smooth": smooth,
+                "smoothing_strength": smoothing_strength if smooth else 0.0,
             }
         )
         if updated_objective > best_objective:
@@ -564,6 +642,8 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("bisections", args.bisections),
             ("gradient_steps_per_bisection", args.gradient_steps),
             ("learning_rate", args.learning_rate),
+            ("smooth", args.smooth),
+            ("smoothing_strength", args.smoothing_strength),
             ("horizon_50_weight_ratio", args.horizon_50_weight_ratio),
             ("endpoint_cache_enabled", not args.no_endpoint_cache),
             ("endpoint_cache_dir", args.endpoint_cache_dir),
@@ -587,6 +667,8 @@ def main() -> None:
     args = parse_args()
     if args.bisections < 0:
         raise ValueError("--bisections must be non-negative.")
+    if not 0 <= args.smoothing_strength <= 1:
+        raise ValueError("--smoothing-strength must be between 0 and 1.")
     if args.horizon_50_weight_ratio <= 0:
         raise ValueError("--horizon-50-weight-ratio must be positive.")
     if args.block_length < 1:
@@ -663,6 +745,8 @@ def main() -> None:
             steps=args.gradient_steps,
             learning_rate=args.learning_rate,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            smooth=args.smooth,
+            smoothing_strength=args.smoothing_strength,
             iteration=iteration,
             starting_step=global_step,
         )
