@@ -1,0 +1,14 @@
+setting,value
+dataset,from_1927
+num_simulations,20000
+seed,20260616
+block_length,10
+max_horizon,50
+endpoint_grid_step,0.05
+bisections,3
+gradient_steps_per_bisection,30
+learning_rate,0.02
+horizon_50_weight_ratio,0.125
+objective,weighted mean across horizons of worst-4% mean annualized outcomes
+path_shape,piecewise-linear interpolation between optimized control points
+horizon_1_anchor,exact empirical one-year optimum
