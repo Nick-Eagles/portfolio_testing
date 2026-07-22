@@ -282,6 +282,72 @@ Detailed rationale, results, and validation live in
 `full_path_optimizer/NOTES.md`; prefer updating that file for full-path-specific
 details rather than expanding `AGENTS.md`.
 
+### Experimental Bisection + Gradient Control-Point Optimizer
+
+A new research branch was added in `experimental_glide_path_optimizer/`.
+
+This branch combines ideas from the bisection optimizer and the full-path
+gradient optimizer:
+
+- Horizon 1 is fixed at the exact empirical one-year anchor.
+- Horizon 50 is initialized by searching the simplex grid for the best endpoint
+  under the weighted full-path objective with linearly interpolated
+  intermediate horizons.
+- Endpoint search results are cached by relevant settings because the endpoint
+  search can be a substantial fraction of runtime.
+- The path is represented by control points. Each bisection inserts linear
+  midpoint controls, then projected Adam ascent updates all controls except
+  horizon 1.
+- Integer horizons are always evaluated by linear interpolation between control
+  points. The gradient is computed on the full 50-horizon interpolated path,
+  then pulled back to control points via the interpolation Jacobian, so moving a
+  control point accounts for all neighboring non-control horizons that move
+  because of that perturbation.
+- Optional `--smooth --smoothing-strength ...` mirrors the convex smoothing
+  behavior in `full_path_optimizer`: after each gradient step, smooth the full
+  interpolated 50-horizon path, preserve the horizon-1 anchor and horizon-50
+  endpoint for that smoothing pass, then read the smoothed values back at the
+  current control horizons.
+
+Important current finding:
+
+This approach has struggled to converge predictably to a good, believable
+solution. That is surprising because by this point the project has tried many
+optimization approaches against the glide-path problem: greedy/local search,
+projected continuation, bisection/local control-point search, direct full-path
+projected gradient ascent, coordinate polishing, smoothing between gradient
+steps, and now bisection plus analytic-gradient control points.
+
+The current interpretation should shift from "we need one more optimizer" to
+"we may need to question the basic objective." In particular, future work
+should be willing to audit:
+
+- whether `worst_4pct_mean` is still the right downside metric, despite being
+  smoother than raw `q02`;
+- whether the worst-tail set changes create objective geometry that is too
+  jagged or basin-dependent for stable path recommendations;
+- whether the objective is too sensitive to historical episodes in the limited
+  sample, even with common random numbers;
+- whether the current horizon weighting trades off short and long horizons in a
+  way that produces unintuitive or unstable paths;
+- whether a recommendation should be based on near-optimal regions, robust
+  plateaus, or simpler constrained families rather than the raw maximizer of a
+  tail metric.
+
+Possible next diagnostic directions:
+
+- Compare several downside metrics on the same fixed candidate families:
+  `q01`, `q02`, `worst_2pct_mean`, `worst_4pct_mean`, drawdown-like outcomes,
+  shortfall probability below a real-return threshold, or utility-style
+  transforms.
+- Plot metric surfaces and path optima for simple low-dimensional families
+  before returning to flexible 50-row paths.
+- Stress-test objective stability across bootstrap seeds, leave-out historical
+  chunks, and alternative horizon weights, treating instability as a primary
+  result rather than a nuisance.
+- Quantify near-optimal sets around candidate paths instead of focusing only on
+  the single best path.
+
 ## Convergence Diagnostics
 
 `q02_diff_density.py` is no longer just about `q02`. It was extended to support the glide path arm and the newer downside metric as well. Recent work used it with no smoothing or regularization to compare checkpoint runs against the larger reference run.

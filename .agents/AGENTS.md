@@ -134,6 +134,25 @@ Full-path optimizer:
 - See `full_path_optimizer/NOTES.md` for the detailed rationale, results, and
   validation notes rather than duplicating that material here.
 
+Experimental bisection/gradient optimizer:
+
+- `experimental_glide_path_optimizer/` is a newer research branch that combines
+  bisection control points with the full-path analytic gradient. It supports
+  endpoint caching and optional convex smoothing, but should be treated as
+  exploratory.
+
+Current research caution:
+
+- After trying greedy search, bisection/local search, direct full-path gradient
+  ascent, coordinate polishing, smoothing, and bisection-plus-gradient control
+  paths, the glide-path problem still struggles to converge predictably to a
+  clean, clearly believable solution.
+- This raises a basic-question concern: instability may come from the objective
+  itself, including the `worst_4pct_mean` downside metric and horizon weighting,
+  rather than merely from optimizer choice. Future work should be willing to
+  audit/reconsider the metric and objective before adding more optimizer
+  machinery.
+
 ### Retirement Arm
 
 This arm models accumulation through retirement and withdrawals after
