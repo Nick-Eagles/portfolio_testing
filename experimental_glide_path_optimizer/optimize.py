@@ -15,6 +15,8 @@ so each objective and gradient call is deterministic for the run.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import sys
 from pathlib import Path
@@ -55,6 +57,7 @@ DEFAULT_GRADIENT_STEPS = 30
 DEFAULT_LEARNING_RATE = 0.02
 DEFAULT_ENDPOINT_CHUNK_SIZE = 16
 DEFAULT_ENDPOINT_GRID_STEP = 0.05
+ENDPOINT_CACHE_VERSION = "weighted_linear_endpoint_v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +93,20 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_ENDPOINT_CHUNK_SIZE,
         help="Endpoint candidate paths scored at once.",
+    )
+    parser.add_argument(
+        "--endpoint-cache-dir",
+        type=Path,
+        default=SCRIPT_DIR / "cache" / "endpoint_search",
+        help=(
+            "Directory for cached horizon-50 endpoint grid-search results. "
+            "Use --no-endpoint-cache to force recomputation."
+        ),
+    )
+    parser.add_argument(
+        "--no-endpoint-cache",
+        action="store_true",
+        help="Disable reading and writing cached horizon-50 endpoint searches.",
     )
     parser.add_argument(
         "--output-dir",
@@ -209,6 +226,86 @@ def weighted_objectives_for_candidate_paths(
     return objectives
 
 
+def normalize_cache_value(value: object) -> object:
+    if isinstance(value, float):
+        return float(f"{value:.17g}")
+    if isinstance(value, np.ndarray):
+        return [normalize_cache_value(float(item)) for item in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [normalize_cache_value(item) for item in value]
+    return value
+
+
+def endpoint_cache_key(settings: dict[str, object]) -> str:
+    normalized = {
+        key: normalize_cache_value(value) for key, value in sorted(settings.items())
+    }
+    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def endpoint_cache_paths(
+    cache_dir: Path,
+    settings: dict[str, object],
+) -> tuple[Path, Path]:
+    key = endpoint_cache_key(settings)
+    return cache_dir / f"{key}_grid.csv", cache_dir / f"{key}_settings.json"
+
+
+def load_endpoint_cache(
+    cache_dir: Path,
+    settings: dict[str, object],
+) -> pd.DataFrame | None:
+    grid_cache, settings_cache = endpoint_cache_paths(cache_dir, settings)
+    if not grid_cache.exists() or not settings_cache.exists():
+        return None
+
+    normalized = {
+        key: normalize_cache_value(value) for key, value in sorted(settings.items())
+    }
+    with settings_cache.open("r", encoding="utf-8") as handle:
+        cached_settings = json.load(handle)
+    if cached_settings != normalized:
+        return None
+
+    summary = pd.read_csv(grid_cache)
+    required_columns = {*WEIGHT_COLUMNS, "objective"}
+    if not required_columns.issubset(summary.columns):
+        return None
+    print(f"loaded cached horizon-50 endpoint search: {grid_cache}", flush=True)
+    return summary
+
+
+def write_endpoint_cache(
+    cache_dir: Path,
+    settings: dict[str, object],
+    summary: pd.DataFrame,
+) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    grid_cache, settings_cache = endpoint_cache_paths(cache_dir, settings)
+    normalized = {
+        key: normalize_cache_value(value) for key, value in sorted(settings.items())
+    }
+
+    temp_grid = grid_cache.with_suffix(".tmp.csv")
+    temp_settings = settings_cache.with_suffix(".tmp.json")
+    summary.to_csv(temp_grid, index=False)
+    with temp_settings.open("w", encoding="utf-8") as handle:
+        json.dump(normalized, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    temp_grid.replace(grid_cache)
+    temp_settings.replace(settings_cache)
+    print(f"cached horizon-50 endpoint search: {grid_cache}", flush=True)
+
+
+def select_best_endpoint(summary: pd.DataFrame) -> np.ndarray:
+    selected = summary.sort_values(
+        ["objective", "stock_weight", "bond_weight", "t_bill_weight"],
+        ascending=[False, False, False, False],
+    ).iloc[0]
+    return selected[WEIGHT_COLUMNS].to_numpy(dtype=float)
+
+
 def select_horizon_50_endpoint(
     path_returns: np.ndarray,
     asset_returns: np.ndarray,
@@ -216,9 +313,17 @@ def select_horizon_50_endpoint(
     endpoint_grid_step: float,
     endpoint_chunk_size: int,
     horizon_50_weight_ratio: float,
+    cache_dir: Path,
+    cache_settings: dict[str, object],
+    use_cache: bool,
 ) -> tuple[np.ndarray, pd.DataFrame]:
     if endpoint_chunk_size < 1:
         raise ValueError("--endpoint-chunk-size must be at least 1.")
+
+    if use_cache:
+        cached = load_endpoint_cache(cache_dir, cache_settings)
+        if cached is not None:
+            return select_best_endpoint(cached), cached
 
     grid = generate_simplex_grid(endpoint_grid_step)
     endpoint_weights = grid[WEIGHT_COLUMNS].to_numpy(dtype=float)
@@ -246,11 +351,9 @@ def select_horizon_50_endpoint(
 
     summary = grid.copy()
     summary["objective"] = np.concatenate(objective_chunks)
-    selected = summary.sort_values(
-        ["objective", "stock_weight", "bond_weight", "t_bill_weight"],
-        ascending=[False, False, False, False],
-    ).iloc[0]
-    return selected[WEIGHT_COLUMNS].to_numpy(dtype=float), summary
+    if use_cache:
+        write_endpoint_cache(cache_dir, cache_settings, summary)
+    return select_best_endpoint(summary), summary
 
 
 def control_frame(control_points: dict[int, np.ndarray], iteration: int) -> pd.DataFrame:
@@ -462,6 +565,9 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("gradient_steps_per_bisection", args.gradient_steps),
             ("learning_rate", args.learning_rate),
             ("horizon_50_weight_ratio", args.horizon_50_weight_ratio),
+            ("endpoint_cache_enabled", not args.no_endpoint_cache),
+            ("endpoint_cache_dir", args.endpoint_cache_dir),
+            ("endpoint_cache_version", ENDPOINT_CACHE_VERSION),
             (
                 "objective",
                 "weighted mean across horizons of worst-4% mean annualized outcomes",
@@ -500,6 +606,18 @@ def main() -> None:
     horizon_one = select_exact_horizon_one(args.dataset)
     print(f"horizon-1 anchor: {np.round(horizon_one, 4)}", flush=True)
 
+    endpoint_cache_settings = {
+        "version": ENDPOINT_CACHE_VERSION,
+        "dataset": args.dataset,
+        "num_simulations": args.num_simulations,
+        "seed": args.seed,
+        "block_length": args.block_length,
+        "max_horizon": MAX_HORIZON,
+        "endpoint_grid_step": args.endpoint_grid_step,
+        "horizon_50_weight_ratio": args.horizon_50_weight_ratio,
+        "horizon_one": horizon_one,
+        "tail_fraction": 0.04,
+    }
     horizon_50, endpoint_summary = select_horizon_50_endpoint(
         path_returns=path_returns,
         asset_returns=asset_returns,
@@ -507,6 +625,9 @@ def main() -> None:
         endpoint_grid_step=args.endpoint_grid_step,
         endpoint_chunk_size=args.endpoint_chunk_size,
         horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        cache_dir=args.endpoint_cache_dir,
+        cache_settings=endpoint_cache_settings,
+        use_cache=not args.no_endpoint_cache,
     )
     endpoint_summary.to_csv(args.output_dir / "endpoint_grid_search.csv", index=False)
 

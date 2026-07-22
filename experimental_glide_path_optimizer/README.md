@@ -20,6 +20,17 @@ Algorithm:
 The block-bootstrap Monte Carlo paths are generated once at startup, so every
 objective and gradient call within a run uses common random numbers.
 
+Endpoint caching:
+
+- Horizon-50 endpoint grid searches are cached under
+  `cache/endpoint_search/` by default.
+- The cache key includes dataset, simulation count, seed, block length, max
+  horizon, endpoint grid step, horizon-50 weight ratio, horizon-1 anchor, tail
+  fraction, and a cache version string.
+- Bisection count, gradient steps, Adam learning rate, output dir, plot dir,
+  and endpoint chunk size do not affect the endpoint cache key.
+- Pass `--no-endpoint-cache` to force recomputation.
+
 Run:
 
 ```bash
