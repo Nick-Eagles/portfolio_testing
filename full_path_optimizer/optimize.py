@@ -65,8 +65,18 @@ def parse_args() -> argparse.Namespace:
         default=0.1,
         help=(
             "Convex smoothing weight for each interior horizon when --smooth is set. "
-            "0 leaves the path unchanged; 1 replaces each interior value with the "
-            "average of its neighboring horizons. Default is intentionally gentle."
+            "0 leaves the path unchanged; 1 replaces each interior value with a "
+            "kernel-smoothed value. Default is intentionally gentle."
+        ),
+    )
+    parser.add_argument(
+        "--smoothing-bandwidth",
+        type=float,
+        default=6.0,
+        help=(
+            "Gaussian kernel bandwidth, in horizons, for --smooth. Larger values "
+            "make smoothing more global across the full path. Default favors broad "
+            "regularization rather than only nearest-neighbor smoothing."
         ),
     )
     parser.add_argument(
@@ -82,14 +92,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def smooth_curve_with_fixed_endpoints(values: np.ndarray, strength: float) -> np.ndarray:
+def smooth_curve_with_fixed_endpoints(
+    values: np.ndarray,
+    strength: float,
+    bandwidth: float,
+) -> np.ndarray:
     if not 0 <= strength <= 1:
         raise ValueError("--smoothing-strength must be between 0 and 1.")
+    if bandwidth <= 0:
+        raise ValueError("--smoothing-bandwidth must be positive.")
     smoothed = values.copy()
     if len(values) <= 2 or strength == 0:
         return smoothed
-    neighbor_average = 0.5 * (values[:-2] + values[2:])
-    smoothed[1:-1] = (1 - strength) * values[1:-1] + strength * neighbor_average
+
+    horizons = np.arange(len(values), dtype=float)
+    interior = horizons[1:-1]
+    distances = interior[:, None] - horizons[None, :]
+    kernel = np.exp(-0.5 * (distances / bandwidth) ** 2)
+    kernel /= kernel.sum(axis=1, keepdims=True)
+    kernel_average = kernel @ values
+    smoothed[1:-1] = (1 - strength) * values[1:-1] + strength * kernel_average
     return smoothed
 
 
@@ -117,12 +139,21 @@ def smooth_path_between_gradient_steps(
     weights: np.ndarray,
     horizon_one: np.ndarray,
     strength: float,
+    bandwidth: float,
 ) -> np.ndarray:
     """Sequential convex horizon smoothing with simplex-preserving adjustments."""
-    smoothed_stock = smooth_curve_with_fixed_endpoints(weights[:, 0], strength)
+    smoothed_stock = smooth_curve_with_fixed_endpoints(
+        weights[:, 0],
+        strength,
+        bandwidth,
+    )
     result = rescale_bonds_and_bills_after_stock_smoothing(weights, smoothed_stock)
 
-    smoothed_bond = smooth_curve_with_fixed_endpoints(result[:, 1], strength)
+    smoothed_bond = smooth_curve_with_fixed_endpoints(
+        result[:, 1],
+        strength,
+        bandwidth,
+    )
     result[:, 1] = np.minimum(smoothed_bond, 1 - result[:, 0])
     result[:, 2] = 1 - result[:, 0] - result[:, 1]
     result = np.clip(result, 0.0, 1.0)
@@ -169,6 +200,7 @@ def optimize_from_start(
     horizon_50_weight_ratio: float,
     smooth: bool,
     smoothing_strength: float,
+    smoothing_bandwidth: float,
 ) -> tuple[np.ndarray, list[float], list[pd.DataFrame]]:
     """Projected Adam ascent; horizon-1 row is held fixed."""
     weights = initial_weights.copy()
@@ -211,6 +243,7 @@ def optimize_from_start(
                 weights,
                 horizon_one,
                 smoothing_strength,
+                smoothing_bandwidth,
             )
         trajectory.append(weights_to_frame(weights).assign(iteration=step))
 
@@ -232,6 +265,8 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.smoothing_strength <= 1:
         raise ValueError("--smoothing-strength must be between 0 and 1.")
+    if args.smoothing_bandwidth <= 0:
+        raise ValueError("--smoothing-bandwidth must be positive.")
     if args.horizon_50_weight_ratio <= 0:
         raise ValueError("--horizon-50-weight-ratio must be positive.")
     if args.block_length < 1:
@@ -269,6 +304,7 @@ def main() -> None:
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
             smooth=args.smooth,
             smoothing_strength=args.smoothing_strength,
+            smoothing_bandwidth=args.smoothing_bandwidth,
         )
         canonical = path_objective(
             path_returns,

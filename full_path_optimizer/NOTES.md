@@ -130,9 +130,10 @@ fix is to reweight horizons in the objective (a one-line change in
   `outputs/gradient_trajectories/`, traces, and gradient-ascent plots including
   `plots/gradient_ascent/end_paths.pdf` and
   `plots/gradient_ascent/best_path_snapshots.pdf`. It also supports an
-  experimental `--smooth --smoothing-strength <value>` mode that applies gentle
-  convex horizon smoothing between gradient-ascent steps, plus
-  `--horizon-50-weight-ratio` for the exponential horizon objective weights.
+  experimental `--smooth --smoothing-strength <value> --smoothing-bandwidth
+  <horizons>` mode that applies convex Gaussian-kernel horizon smoothing
+  between gradient-ascent steps, plus `--horizon-50-weight-ratio` for the
+  exponential horizon objective weights.
 - `grid_certificate.py` — local grid coordinate ascent. Writes
   `outputs/polished_path.csv` (the final recommended path), polish diagnostics,
   and coordinate-ascent plots.
