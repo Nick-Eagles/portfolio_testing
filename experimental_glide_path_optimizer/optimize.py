@@ -95,6 +95,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--early-stop",
+        action="store_true",
+        help=(
+            "Stop a bisection iteration when the objective from 3 accepted steps "
+            "ago is better than the current objective. The last 3 steps are "
+            "discarded from outputs and plots."
+        ),
+    )
+    parser.add_argument(
         "--horizon-50-weight-ratio",
         type=float,
         default=DEFAULT_HORIZON_50_WEIGHT_RATIO,
@@ -491,6 +500,7 @@ def optimize_control_points(
     smooth: bool,
     smoothing_strength: float,
     smoothing_bandwidth: float,
+    early_stop: bool,
     iteration: int,
     starting_step: int,
 ) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int]:
@@ -508,9 +518,8 @@ def optimize_control_points(
     second_moment = np.zeros_like(values)
     beta1, beta2, epsilon = 0.9, 0.999, 1e-9
     rows: list[dict[str, float | int]] = []
+    value_history: list[np.ndarray] = []
     global_step = starting_step
-    best_values = values.copy()
-    best_objective = -np.inf
 
     for local_step in range(1, steps + 1):
         full_path = jacobian @ values
@@ -563,12 +572,21 @@ def optimize_control_points(
                 "smoothing_bandwidth": smoothing_bandwidth if smooth else 0.0,
             }
         )
-        if updated_objective > best_objective:
-            best_objective = updated_objective
-            best_values = values.copy()
+        value_history.append(values.copy())
+
+        if (
+            early_stop
+            and len(rows) >= 4
+            and rows[-4]["objective"] > updated_objective
+        ):
+            rows = rows[:-3]
+            value_history = value_history[:-3]
+            global_step -= 3
+            values = value_history[-1].copy()
+            break
 
     updated = {
-        horizon: best_values[index].copy() for index, horizon in enumerate(control_horizons)
+        horizon: values[index].copy() for index, horizon in enumerate(control_horizons)
     }
     return updated, rows, global_step
 
@@ -679,6 +697,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("smooth", args.smooth),
             ("smoothing_strength", args.smoothing_strength),
             ("smoothing_bandwidth", args.smoothing_bandwidth),
+            ("early_stop", args.early_stop),
             ("horizon_50_weight_ratio", args.horizon_50_weight_ratio),
             ("endpoint_cache_enabled", not args.no_endpoint_cache),
             ("endpoint_cache_dir", args.endpoint_cache_dir),
@@ -785,6 +804,7 @@ def main() -> None:
             smooth=args.smooth,
             smoothing_strength=args.smoothing_strength,
             smoothing_bandwidth=args.smoothing_bandwidth,
+            early_stop=args.early_stop,
             iteration=iteration,
             starting_step=global_step,
         )

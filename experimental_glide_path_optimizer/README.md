@@ -19,6 +19,9 @@ Algorithm:
      `--smoothing-bandwidth` convex Gaussian-kernel horizon smoothing between
      gradient steps, using the same stock-then-bond simplex-preserving smoother
      as `full_path_optimizer`;
+   - optionally stop early with `--early-stop` if the objective has fallen
+     below its value from three accepted steps earlier in the same bisection
+     iteration;
    - evaluate integer horizons by linear interpolation between control points.
 
 The block-bootstrap Monte Carlo paths are generated once at startup, so every
@@ -32,6 +35,13 @@ post-gradient value during each smoothing pass, matching the full-path
 optimizer's endpoint behavior. `--smoothing-strength` controls the convex blend
 toward the smoothed curve, while `--smoothing-bandwidth` controls how broadly
 the Gaussian kernel averages across horizons.
+
+By default, every bisection iteration carries forward the final gradient step,
+even if an earlier step in that iteration had a better objective. This keeps the
+objective trace plot aligned with the path that the algorithm actually uses. If
+`--early-stop` is enabled, a bisection iteration halts when the objective from
+three accepted steps earlier is better than the current objective; the last
+three steps are discarded from the path state, CSV outputs, and plots.
 
 Endpoint caching:
 
