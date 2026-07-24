@@ -15,9 +15,10 @@ Algorithm:
    - bisect every current control-point segment with a simple linear midpoint;
    - run `--gradient-steps` projected Adam ascent steps on all control points
      except horizon 1;
-   - optionally apply `--smooth` / `--smoothing-strength` convex horizon
-     smoothing between gradient steps, using the same stock-then-bond
-     simplex-preserving smoother as `full_path_optimizer`;
+   - optionally apply `--smooth` / `--smoothing-strength` /
+     `--smoothing-bandwidth` convex Gaussian-kernel horizon smoothing between
+     gradient steps, using the same stock-then-bond simplex-preserving smoother
+     as `full_path_optimizer`;
    - evaluate integer horizons by linear interpolation between control points.
 
 The block-bootstrap Monte Carlo paths are generated once at startup, so every
@@ -28,7 +29,9 @@ When smoothing is enabled, smoothing is applied to the full interpolated
 smoothed values at the current control horizons as the next control-point state.
 Horizon 1 is restored to the empirical anchor and horizon 50 is held at its
 post-gradient value during each smoothing pass, matching the full-path
-optimizer's endpoint behavior.
+optimizer's endpoint behavior. `--smoothing-strength` controls the convex blend
+toward the smoothed curve, while `--smoothing-bandwidth` controls how broadly
+the Gaussian kernel averages across horizons.
 
 Endpoint caching:
 
