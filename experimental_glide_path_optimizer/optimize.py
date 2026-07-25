@@ -52,8 +52,8 @@ from full_path_optimizer.core import (
 from portfolio_helpers import generate_portfolio_weights
 from simulate_glide_path import DEFAULT_SEED
 
-DEFAULT_BISECTIONS = 3
-DEFAULT_GRADIENT_STEPS = 30
+DEFAULT_BISECTIONS = 5
+DEFAULT_GRADIENT_STEPS = 10
 DEFAULT_LEARNING_RATE = 0.02
 DEFAULT_ENDPOINT_CHUNK_SIZE = 16
 DEFAULT_ENDPOINT_GRID_STEP = 0.05
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-strength",
         type=float,
-        default=0.1,
+        default=0.2,
         help=(
             "Convex smoothing weight for each interior horizon when --smooth is set. "
             "0 leaves the path unchanged; 1 replaces each interior value with a "
@@ -87,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-bandwidth",
         type=float,
-        default=6.0,
+        default=10.0,
         help=(
             "Gaussian kernel bandwidth, in horizons, for --smooth. Larger values "
             "make smoothing more global across the full path. Default favors broad "
