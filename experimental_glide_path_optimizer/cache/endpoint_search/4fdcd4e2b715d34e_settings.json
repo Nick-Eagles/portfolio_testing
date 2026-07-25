@@ -1,0 +1,16 @@
+{
+  "block_length": 10,
+  "dataset": "from_1927",
+  "endpoint_grid_step": 0.05,
+  "horizon_50_weight_ratio": 64.0,
+  "horizon_one": [
+    0.0,
+    0.24,
+    0.76
+  ],
+  "max_horizon": 50,
+  "num_simulations": 20000,
+  "seed": 20260616,
+  "tail_fraction": 0.04,
+  "version": "weighted_linear_endpoint_v1"
+}

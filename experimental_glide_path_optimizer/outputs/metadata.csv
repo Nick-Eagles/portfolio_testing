@@ -12,7 +12,7 @@ smooth,True
 smoothing_strength,0.2
 smoothing_bandwidth,10.0
 early_stop,True
-horizon_50_weight_ratio,0.05
+horizon_50_weight_ratio,0.01
 endpoint_cache_enabled,True
 endpoint_cache_dir,/home/nick/Documents/programming/portfolio_testing/experimental_glide_path_optimizer/cache/endpoint_search
 endpoint_cache_version,weighted_linear_endpoint_v1
