@@ -1,6 +1,6 @@
 setting,value
 dataset,from_1927
-num_simulations,20000
+num_simulations,50000
 seed,20260616
 block_length,10
 max_horizon,50
