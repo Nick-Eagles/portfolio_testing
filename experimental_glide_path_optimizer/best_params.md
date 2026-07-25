@@ -1,8 +1,8 @@
 --smooth
 --horizon-50-weight-ratio 1
---smoothing-bandwidth 15
---smoothing-strength 0.4
+--smoothing-bandwidth 10
+--smoothing-strength 0.2
 --gradient-steps 10
 --bisections 5 
 --early-stop
--0.002976
+-0.002971
