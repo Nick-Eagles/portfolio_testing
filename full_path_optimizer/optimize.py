@@ -261,6 +261,21 @@ def optimize_from_start(
     return best_weights, trace, trajectory
 
 
+def average_random_paths(
+    optimized_paths: dict[str, np.ndarray],
+    horizon_one: np.ndarray,
+) -> np.ndarray | None:
+    random_paths = [
+        weights for name, weights in optimized_paths.items() if name.startswith("random_")
+    ]
+    if not random_paths:
+        return None
+    averaged = np.mean(random_paths, axis=0)
+    averaged = project_path_to_simplex(averaged)
+    averaged[0] = horizon_one
+    return averaged
+
+
 def main() -> None:
     args = parse_args()
     if not 0 <= args.smoothing_strength <= 1:
@@ -293,6 +308,7 @@ def main() -> None:
     results = []
     traces = []
     best_name, best_weights, best_score = None, None, -np.inf
+    optimized_paths: dict[str, np.ndarray] = {}
     for name, initial_weights in starts.items():
         began = time.time()
         weights, trace, trajectory = optimize_from_start(
@@ -328,6 +344,7 @@ def main() -> None:
                 {"start": name, "iteration": np.arange(len(trace)), "objective": trace}
             )
         )
+        optimized_paths[name] = weights.copy()
         weights_to_frame(weights).to_csv(start_paths_dir / f"{name}.csv", index=False)
         pd.concat(trajectory, ignore_index=True).to_csv(
             trajectories_dir / f"{name}.csv", index=False
@@ -338,6 +355,39 @@ def main() -> None:
         )
         if canonical > best_score:
             best_name, best_weights, best_score = name, weights, canonical
+
+    random_average_weights = average_random_paths(optimized_paths, horizon_one)
+    if random_average_weights is not None:
+        random_average_canonical = path_objective(
+            path_returns,
+            random_average_weights,
+            asset_returns,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
+        random_average_sim = path_objective(
+            path_returns,
+            random_average_weights,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
+        results.append(
+            {
+                "start": "random_average",
+                "initial_objective": np.nan,
+                "final_objective": random_average_sim,
+                "best_sim_objective": random_average_sim,
+                "canonical_objective": random_average_canonical,
+                "seconds": 0.0,
+            }
+        )
+        weights_to_frame(random_average_weights).to_csv(
+            start_paths_dir / "random_average.csv",
+            index=False,
+        )
+        print(
+            "random_average: "
+            f"sim objective {random_average_sim:.6f}, "
+            f"canonical {random_average_canonical:.6f}"
+        )
 
     summary = pd.DataFrame(results).sort_values("canonical_objective", ascending=False)
     summary.to_csv(args.output_dir / "optimization_start_summary.csv", index=False)
