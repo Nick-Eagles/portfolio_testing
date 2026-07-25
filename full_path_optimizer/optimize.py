@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
-    parser.add_argument("--iterations", type=int, default=30)
+    parser.add_argument("--iterations", type=int, default=15)
     parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument(
         "--horizon-50-weight-ratio",
@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-strength",
         type=float,
-        default=0.1,
+        default=0.2,
         help=(
             "Convex smoothing weight for each interior horizon when --smooth is set. "
             "0 leaves the path unchanged; 1 replaces each interior value with a "
@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-bandwidth",
         type=float,
-        default=6.0,
+        default=10.0,
         help=(
             "Gaussian kernel bandwidth, in horizons, for --smooth. Larger values "
             "make smoothing more global across the full path. Default favors broad "
