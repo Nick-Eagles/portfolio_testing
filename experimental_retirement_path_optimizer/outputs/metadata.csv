@@ -1,0 +1,20 @@
+setting,value
+dataset,from_1927
+num_simulations,20000
+seed,20260620
+block_length,10
+retirement_path,/home/nick/Documents/programming/portfolio_testing/data/from_1927/retirement/retirement_path.csv
+optimized_ages,20-65
+fixed_retirement_block,65-90
+objective,weighted mean across starting ages 20-65 of worst-4% age-90 terminal wealth
+contribution_scaling,age 20 contribution is 1; later starting ages use 1 / reference mean entering balance
+age_65_weight_ratio,8.0
+endpoint_grid_step,0.05
+bisections,5
+gradient_steps_per_bisection,10
+learning_rate,0.02
+smooth,True
+smoothing_strength,0.2
+smoothing_bandwidth,10.0
+endpoint_cache_enabled,True
+endpoint_cache_version,retirement_age20_endpoint_v1
