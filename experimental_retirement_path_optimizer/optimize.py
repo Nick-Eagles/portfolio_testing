@@ -60,6 +60,9 @@ DEFAULT_LEARNING_RATE = 0.02
 DEFAULT_ENDPOINT_GRID_STEP = 0.05
 DEFAULT_ENDPOINT_CHUNK_SIZE = 16
 ENDPOINT_CACHE_VERSION = "retirement_age20_endpoint_v1"
+DEFAULT_CONTRIBUTION_REFERENCE_PATH = (
+    PROJECT_ROOT / "external_comparisons" / "fidelity_glide_path.csv"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,6 +88,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint-grid-step", type=float, default=DEFAULT_ENDPOINT_GRID_STEP)
     parser.add_argument("--endpoint-chunk-size", type=int, default=DEFAULT_ENDPOINT_CHUNK_SIZE)
     parser.add_argument("--retirement-path", type=Path, default=None)
+    parser.add_argument(
+        "--contribution-reference-path",
+        type=Path,
+        default=DEFAULT_CONTRIBUTION_REFERENCE_PATH,
+        help=(
+            "Age-weight path used only to derive starting-age contribution "
+            "constants. Defaults to Fidelity's external comparison glide path."
+        ),
+    )
     parser.add_argument("--smooth", action="store_true")
     parser.add_argument("--smoothing-strength", type=float, default=0.2)
     parser.add_argument("--smoothing-bandwidth", type=float, default=10.0)
@@ -157,6 +169,30 @@ def load_retirement_weight_path(path: Path) -> pd.DataFrame:
     if not np.allclose(weights.sum(axis=1), 1.0, atol=1e-6):
         raise ValueError("retirement path weights must sum to 1.")
     return frame[["starting_age", *WEIGHT_COLUMNS]].copy()
+
+
+def load_age_weight_path(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing age-weight path: {path}")
+    frame = pd.read_csv(path) if path.suffix == ".csv" else pd.read_parquet(path)
+    if "starting_age" in frame.columns:
+        age_column = "starting_age"
+    elif "age" in frame.columns:
+        age_column = "age"
+    else:
+        raise ValueError("age-weight path must contain either 'starting_age' or 'age'.")
+
+    result = frame[[age_column, *WEIGHT_COLUMNS]].rename(columns={age_column: "starting_age"})
+    result["starting_age"] = result["starting_age"].astype(int)
+    result = result.sort_values("starting_age").drop_duplicates("starting_age", keep="last")
+    expected = list(range(MIN_STARTING_AGE, MAX_STARTING_AGE + 1))
+    if result["starting_age"].tolist() != expected:
+        raise ValueError(
+            f"age-weight path must contain ages {MIN_STARTING_AGE} through {MAX_STARTING_AGE}."
+        )
+    if not np.allclose(result[WEIGHT_COLUMNS].sum(axis=1), 1.0, atol=1e-6):
+        raise ValueError("age-weight path weights must sum to 1.")
+    return result.reset_index(drop=True)
 
 
 def weights_by_age_from_frame(frame: pd.DataFrame) -> dict[int, np.ndarray]:
@@ -717,6 +753,41 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
     plt.close(fig)
 
 
+def plot_contribution_scales(scales: pd.DataFrame, output_pdf: Path) -> None:
+    output_png = output_pdf.with_suffix(".png")
+    fig, ax = plt.subplots(figsize=(10.5, 5.8), constrained_layout=True)
+    ax.plot(
+        scales["starting_age"],
+        scales["annual_contribution"],
+        color="black",
+        linewidth=1.8,
+        marker="o",
+        markersize=3,
+    )
+    label_ages = set(range(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1, 10))
+    label_ages.add(FIXED_ANCHOR_AGE)
+    labels = scales[scales["starting_age"].isin(label_ages)]
+    for _, row in labels.iterrows():
+        ax.annotate(
+            f"{float(row['annual_contribution']):.3f}",
+            xy=(int(row["starting_age"]), float(row["annual_contribution"])),
+            xytext=(0, 9),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color="black",
+        )
+    ax.set_title("Starting-Age Contribution Constants")
+    ax.set_xlabel("Starting age")
+    ax.set_ylabel("Constant annual contribution used for that start age")
+    ax.set_xticks(list(range(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1, 5)))
+    ax.grid(alpha=0.25)
+    fig.savefig(output_pdf)
+    fig.savefig(output_png, dpi=180)
+    plt.close(fig)
+
+
 def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: Path) -> None:
     metadata = pd.DataFrame(
         [
@@ -725,10 +796,11 @@ def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: 
             ("seed", args.seed),
             ("block_length", args.block_length),
             ("retirement_path", retirement_path),
+            ("contribution_reference_path", args.contribution_reference_path),
             ("optimized_ages", f"{OPTIMIZED_START_AGE}-{FIXED_ANCHOR_AGE}"),
             ("fixed_retirement_block", f"{FIXED_ANCHOR_AGE}-{MAX_STARTING_AGE}"),
             ("objective", "weighted mean across starting ages 20-65 of worst-4% age-90 terminal wealth"),
-            ("contribution_scaling", "age 20 contribution is 1; later starting ages use 1 / reference mean entering balance"),
+            ("contribution_scaling", "age 20 contribution is 1; later starting ages use 1 / contribution-reference mean entering balance"),
             ("age_65_weight_ratio", args.age_65_weight_ratio),
             ("endpoint_grid_step", args.endpoint_grid_step),
             ("bisections", args.bisections),
@@ -765,6 +837,8 @@ def main() -> None:
     retirement_path = args.retirement_path or default_retirement_path(args.dataset)
     reference_frame = load_retirement_weight_path(retirement_path)
     reference_weights = weights_by_age_from_frame(reference_frame)
+    contribution_reference_frame = load_age_weight_path(args.contribution_reference_path)
+    contribution_reference_weights = weights_by_age_from_frame(contribution_reference_frame)
     fixed_weights_by_age = {age: reference_weights[age] for age in range(FIXED_ANCHOR_AGE, MAX_STARTING_AGE + 1)}
     fixed_age_65 = fixed_weights_by_age[FIXED_ANCHOR_AGE]
 
@@ -774,7 +848,7 @@ def main() -> None:
         seed=args.seed,
         block_length=args.block_length,
     )
-    scales = contribution_scales_from_reference_path(path_returns, reference_weights)
+    scales = contribution_scales_from_reference_path(path_returns, contribution_reference_weights)
     scales.to_csv(args.output_dir / "contribution_scales.csv", index=False)
     contributions = contribution_by_start_age(scales)
 
@@ -785,6 +859,7 @@ def main() -> None:
         "seed": args.seed,
         "block_length": args.block_length,
         "retirement_path": str(retirement_path),
+        "contribution_reference_path": str(args.contribution_reference_path),
         "fixed_age_65": fixed_age_65,
         "contributions": [contributions[int(age)] for age in EVALUATED_START_AGES],
         "age_65_weight_ratio": args.age_65_weight_ratio,
@@ -865,6 +940,7 @@ def main() -> None:
     if not trace.empty:
         trace.to_csv(args.output_dir / "objective_trace.csv", index=False)
     write_metadata(args, args.output_dir, retirement_path)
+    plot_contribution_scales(scales, args.plot_dir / "contribution_start_constants_by_age.pdf")
     plot_iteration_paths(path_history_frame, args.plot_dir / "path_iterations.pdf")
     if not trace.empty:
         plot_objective_trace(trace, args.plot_dir / "objective_trace.pdf")

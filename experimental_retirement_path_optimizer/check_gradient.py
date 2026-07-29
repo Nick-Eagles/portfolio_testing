@@ -14,12 +14,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from optimize import (
     DEFAULT_AGE_65_WEIGHT_RATIO,
+    DEFAULT_CONTRIBUTION_REFERENCE_PATH,
     FIXED_ANCHOR_AGE,
     OPTIMIZED_AGES,
     contribution_by_start_age,
     contribution_scales_from_reference_path,
     default_retirement_path,
-    interpolate_control_points,
+    load_age_weight_path,
     load_retirement_weight_path,
     make_shared_age_returns,
     project_path_to_simplex,
@@ -39,11 +40,13 @@ def main() -> None:
     )
     reference = load_retirement_weight_path(default_retirement_path(dataset))
     reference_weights = weights_by_age_from_frame(reference)
+    contribution_reference = load_age_weight_path(DEFAULT_CONTRIBUTION_REFERENCE_PATH)
+    contribution_reference_weights = weights_by_age_from_frame(contribution_reference)
     fixed_weights_by_age = {
         age: reference_weights[age]
         for age in range(FIXED_ANCHOR_AGE, 91)
     }
-    scales = contribution_scales_from_reference_path(path_returns, reference_weights)
+    scales = contribution_scales_from_reference_path(path_returns, contribution_reference_weights)
     contributions = contribution_by_start_age(scales)
     random_path = project_path_to_simplex(rng.dirichlet(np.ones(3), size=len(OPTIMIZED_AGES)))
     random_path[-1] = fixed_weights_by_age[FIXED_ANCHOR_AGE]

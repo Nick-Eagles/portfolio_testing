@@ -9,9 +9,10 @@ The optimizer:
    `data/<dataset>/retirement/retirement_path.csv`.
 2. Freezes ages 65 through 90 from that retirement block.
 3. Derives age-specific annual contribution constants from a reference
-   accumulation pass on the loaded path. Age 20 contributes `1.0`; later ages
-   contribute `1 / mean_entering_balance_at_age`, so a normalized age-30 saver
-   with average accrued wealth near 15 contributes about `1/15`.
+   accumulation pass on `external_comparisons/fidelity_glide_path.csv` by
+   default. Age 20 contributes `1.0`; later ages contribute
+   `1 / mean_entering_balance_at_age`, so a normalized age-30 saver with
+   average accrued wealth near 15 contributes about `1/15`.
 4. Optimizes ages 20 through 65 with age 65 fixed, using a weighted mean of
    worst-4% age-90 terminal wealth across starting ages 20 through 65.
 5. Represents ages 20 through 65 with bisection control points and optimizes
@@ -49,5 +50,6 @@ Main outputs:
 - `outputs/contribution_scales.csv`
 - `outputs/path_history.csv`
 - `outputs/objective_trace.csv`
+- `plots/contribution_start_constants_by_age.pdf`
 - `plots/path_iterations.pdf`
 - `plots/objective_trace.pdf`
