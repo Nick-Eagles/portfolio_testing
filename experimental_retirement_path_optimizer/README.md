@@ -31,6 +31,11 @@ The worst-tail mean uses the same CVaR-style subgradient as the full-path
 optimizer: average terminal-wealth gradients across the current worst-tail
 simulations.
 
+Pre-retirement objective and comparison metrics floor age-90 terminal wealth at
+0 before computing worst-tail means. Standalone post-retirement comparison
+metrics remain unfloored, so negative retirement outcomes can still identify
+bad post-retirement allocations.
+
 Run:
 
 ```bash
