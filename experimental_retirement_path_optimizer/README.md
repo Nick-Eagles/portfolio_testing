@@ -13,8 +13,9 @@ The optimizer:
    default. Age 20 contributes `1.0`; later ages contribute
    `1 / mean_entering_balance_at_age`, so a normalized age-30 saver with
    average accrued wealth near 15 contributes about `1/15`.
-4. Optimizes ages 20 through 65 with age 65 fixed, using a weighted mean of
-   worst-4% age-90 terminal wealth across starting ages 20 through 65.
+4. Optimizes ages 20 through 65 with age 65 fixed, using a weighted mean
+   across starting ages 20 through 65. Each starting-age score is the mean of
+   worst-4% floored wealth outcomes over ages 65 through 90.
 5. Represents ages 20 through 65 with bisection control points and optimizes
    those controls with projected Adam. Integer ages are evaluated by linear
    interpolation between controls.
@@ -31,10 +32,10 @@ The worst-tail mean uses the same CVaR-style subgradient as the full-path
 optimizer: average terminal-wealth gradients across the current worst-tail
 simulations.
 
-Pre-retirement objective and comparison metrics floor age-90 terminal wealth at
-0 before computing worst-tail means. Standalone post-retirement comparison
-metrics remain unfloored, so negative retirement outcomes can still identify
-bad post-retirement allocations.
+Pre-retirement objective and comparison metrics floor wealth at 0 before
+computing worst-tail means for ages 65 through 90. Standalone post-retirement
+comparison metrics remain unfloored, so negative retirement outcomes can still
+identify bad post-retirement allocations.
 
 Run:
 

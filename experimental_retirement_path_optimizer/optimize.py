@@ -3,8 +3,7 @@
 The existing retirement path is used as a fixed age-65-through-90 block. Ages
 20 through 65 are represented by bisection control points, with age 65 fixed to
 the loaded retirement block. The objective is a weighted mean across starting
-ages 20..65 of the mean age-90 terminal wealth among the worst 4% of bootstrap
-paths.
+ages 20..65 of the mean worst-4% floored wealth across retirement ages 65..90.
 """
 
 from __future__ import annotations
@@ -52,6 +51,7 @@ OPTIMIZED_START_AGE = MIN_STARTING_AGE
 FIXED_ANCHOR_AGE = RETIREMENT_AGE
 OPTIMIZED_AGES = np.arange(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1)
 EVALUATED_START_AGES = np.arange(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1)
+RETIREMENT_EVALUATION_AGES = np.arange(FIXED_ANCHOR_AGE, MAX_STARTING_AGE + 1)
 TAIL_FRACTION = 0.04
 PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR = 0.0
 DEFAULT_AGE_65_WEIGHT_RATIO = 8.0
@@ -271,28 +271,39 @@ def terminal_values_and_gradient(
     objective = 0.0
 
     for start_index, start_age in enumerate(EVALUATED_START_AGES):
-        terminal, reverse_cache = simulate_terminal_values_for_start(
+        outcomes_by_age, reverse_cache = simulate_terminal_values_for_start(
             path_returns=path_returns,
             age_weights=age_weights,
             contributions=contributions,
             start_age=int(start_age),
         )
-        floored_terminal = np.maximum(terminal, PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR)
-        tail_indexes = np.argpartition(floored_terminal, tail_count - 1)[:tail_count]
-        scores[start_index] = float(floored_terminal[tail_indexes].mean())
-        coefficient = start_weights[start_index] / (len(EVALUATED_START_AGES) * tail_count)
+        age_scores = []
+        for evaluation_age in RETIREMENT_EVALUATION_AGES:
+            outcome = outcomes_by_age[int(evaluation_age)]
+            floored_outcome = np.maximum(outcome, PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR)
+            tail_indexes = np.argpartition(floored_outcome, tail_count - 1)[:tail_count]
+            age_scores.append(float(floored_outcome[tail_indexes].mean()))
+            coefficient = (
+                start_weights[start_index]
+                / (len(EVALUATED_START_AGES) * len(RETIREMENT_EVALUATION_AGES) * tail_count)
+            )
+            positive_tail_indexes = tail_indexes[
+                outcome[tail_indexes] > PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR
+            ]
+            if len(positive_tail_indexes) == 0:
+                continue
+            gradient += reverse_terminal_gradient_for_start(
+                path_returns=path_returns,
+                reverse_cache=reverse_cache,
+                fixed_weights_by_age=fixed_weights_by_age,
+                start_age=int(start_age),
+                evaluation_age=int(evaluation_age),
+                tail_indexes=positive_tail_indexes,
+                coefficient=coefficient,
+            )
+
+        scores[start_index] = float(np.mean(age_scores))
         objective += scores[start_index] * start_weights[start_index] / len(EVALUATED_START_AGES)
-        positive_tail_indexes = tail_indexes[terminal[tail_indexes] > PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR]
-        if len(positive_tail_indexes) == 0:
-            continue
-        gradient += reverse_terminal_gradient_for_start(
-            path_returns=path_returns,
-            reverse_cache=reverse_cache,
-            fixed_weights_by_age=fixed_weights_by_age,
-            start_age=int(start_age),
-            tail_indexes=positive_tail_indexes,
-            coefficient=coefficient,
-        )
 
     return float(objective), gradient, scores
 
@@ -312,15 +323,19 @@ def terminal_objective(
     objective = 0.0
 
     for start_index, start_age in enumerate(EVALUATED_START_AGES):
-        terminal, _reverse_cache = simulate_terminal_values_for_start(
+        outcomes_by_age, _reverse_cache = simulate_terminal_values_for_start(
             path_returns=path_returns,
             age_weights=age_weights,
             contributions=contributions,
             start_age=int(start_age),
         )
-        floored_terminal = np.maximum(terminal, PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR)
-        tail_indexes = np.argpartition(floored_terminal, tail_count - 1)[:tail_count]
-        scores[start_index] = float(floored_terminal[tail_indexes].mean())
+        age_scores = []
+        for evaluation_age in RETIREMENT_EVALUATION_AGES:
+            outcome = outcomes_by_age[int(evaluation_age)]
+            floored_outcome = np.maximum(outcome, PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR)
+            tail_indexes = np.argpartition(floored_outcome, tail_count - 1)[:tail_count]
+            age_scores.append(float(floored_outcome[tail_indexes].mean()))
+        scores[start_index] = float(np.mean(age_scores))
         objective += scores[start_index] * start_weights[start_index] / len(EVALUATED_START_AGES)
 
     return float(objective), scores
@@ -331,7 +346,7 @@ def simulate_terminal_values_for_start(
     age_weights: dict[int, np.ndarray],
     contributions: dict[int, float],
     start_age: int,
-) -> tuple[np.ndarray, dict[str, object]]:
+) -> tuple[dict[int, np.ndarray], dict[str, object]]:
     balances = np.zeros(path_returns.shape[0], dtype=float) if start_age == OPTIMIZED_START_AGE else np.ones(path_returns.shape[0], dtype=float)
     pre_contribution_balances: dict[int, np.ndarray] = {}
     growth_by_age: dict[int, np.ndarray] = {}
@@ -345,14 +360,16 @@ def simulate_terminal_values_for_start(
         balances = pre_contribution_balances[age] * growth
 
     balance_65 = balances.copy()
+    outcomes_by_age = {FIXED_ANCHOR_AGE: balance_65.copy()}
     post_growth_by_age: dict[int, np.ndarray] = {}
     for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
         returns = path_returns[:, age_path_offset(age), :]
         growth = 1 + returns @ age_weights[age]
         post_growth_by_age[age] = growth
         balances = (balances - WITHDRAWAL_RATE * balance_65) * growth
+        outcomes_by_age[age] = balances.copy()
 
-    return balances, {
+    return outcomes_by_age, {
         "pre_contribution_balances": pre_contribution_balances,
         "growth_by_age": growth_by_age,
         "post_growth_by_age": post_growth_by_age,
@@ -364,6 +381,7 @@ def reverse_terminal_gradient_for_start(
     reverse_cache: dict[str, object],
     fixed_weights_by_age: dict[int, np.ndarray],
     start_age: int,
+    evaluation_age: int,
     tail_indexes: np.ndarray,
     coefficient: float,
 ) -> np.ndarray:
@@ -372,16 +390,17 @@ def reverse_terminal_gradient_for_start(
     post_growth_by_age = reverse_cache["post_growth_by_age"]
 
     adjoint = np.full(len(tail_indexes), coefficient, dtype=float)
-    adjoint_balance_65 = np.zeros(len(tail_indexes), dtype=float)
-    for age in range(MAX_STARTING_AGE, FIRST_WITHDRAWAL_AGE - 1, -1):
-        growth = post_growth_by_age[age][tail_indexes]
-        if age - 1 == FIXED_ANCHOR_AGE:
-            adjoint_balance_65 += adjoint * (1 - WITHDRAWAL_RATE) * growth
-        else:
-            adjoint_balance_65 += adjoint * (-WITHDRAWAL_RATE) * growth
-            adjoint = adjoint * growth
+    if evaluation_age > FIXED_ANCHOR_AGE:
+        adjoint_balance_65 = np.zeros(len(tail_indexes), dtype=float)
+        for age in range(evaluation_age, FIRST_WITHDRAWAL_AGE - 1, -1):
+            growth = post_growth_by_age[age][tail_indexes]
+            if age - 1 == FIXED_ANCHOR_AGE:
+                adjoint_balance_65 += adjoint * (1 - WITHDRAWAL_RATE) * growth
+            else:
+                adjoint_balance_65 += adjoint * (-WITHDRAWAL_RATE) * growth
+                adjoint = adjoint * growth
+        adjoint = adjoint_balance_65
 
-    adjoint = adjoint_balance_65
     gradient = np.zeros((len(OPTIMIZED_AGES), len(WEIGHT_COLUMNS)), dtype=float)
     for age in range(FIXED_ANCHOR_AGE, start_age - 1, -1):
         age_index = age - OPTIMIZED_START_AGE
@@ -753,7 +772,7 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
         ax.axvline(int(group["global_step"].min()), color="#777777", linewidth=0.8, alpha=0.35)
     ax.set_title("Objective at Every Gradient Step")
     ax.set_xlabel("Gradient step")
-    ax.set_ylabel("Weighted mean worst-4% age-90 terminal wealth")
+    ax.set_ylabel("Weighted mean worst-4% wealth across ages 65-90")
     ax.grid(alpha=0.25)
     fig.savefig(output_pdf)
     plt.close(fig)
@@ -805,7 +824,10 @@ def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: 
             ("contribution_reference_path", args.contribution_reference_path),
             ("optimized_ages", f"{OPTIMIZED_START_AGE}-{FIXED_ANCHOR_AGE}"),
             ("fixed_retirement_block", f"{FIXED_ANCHOR_AGE}-{MAX_STARTING_AGE}"),
-            ("objective", "weighted mean across starting ages 20-65 of worst-4% age-90 terminal wealth"),
+            (
+                "objective",
+                "weighted mean across starting ages 20-65 of the mean worst-4% floored wealth over ages 65-90",
+            ),
             ("pre_retirement_terminal_wealth_floor", PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR),
             ("contribution_scaling", "age 20 contribution is 1; later starting ages use 1 / contribution-reference mean entering balance"),
             ("age_65_weight_ratio", args.age_65_weight_ratio),

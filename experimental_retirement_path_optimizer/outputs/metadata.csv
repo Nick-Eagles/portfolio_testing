@@ -7,7 +7,7 @@ retirement_path,/home/nick/Documents/programming/portfolio_testing/data/from_192
 contribution_reference_path,/home/nick/Documents/programming/portfolio_testing/external_comparisons/fidelity_glide_path.csv
 optimized_ages,20-65
 fixed_retirement_block,65-90
-objective,weighted mean across starting ages 20-65 of worst-4% age-90 terminal wealth
+objective,weighted mean across starting ages 20-65 of the mean worst-4% floored wealth over ages 65-90
 pre_retirement_terminal_wealth_floor,0.0
 contribution_scaling,age 20 contribution is 1; later starting ages use 1 / contribution-reference mean entering balance
 age_65_weight_ratio,8.0

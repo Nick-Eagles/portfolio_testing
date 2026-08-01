@@ -66,6 +66,7 @@ METRICS = [
     ("terminal_mean", "Expected Value"),
 ]
 PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR = 0.0
+RETIREMENT_EVALUATION_AGES = np.arange(RETIREMENT_AGE, MAX_STARTING_AGE + 1)
 
 
 def parse_args() -> argparse.Namespace:
@@ -196,7 +197,7 @@ def terminal_balances_with_start_age_contribution(
     asset_returns: np.ndarray,
     age_weight_path: pd.DataFrame,
     contribution_by_start_age: dict[int, float],
-) -> dict[int, np.ndarray]:
+) -> dict[int, dict[int, np.ndarray]]:
     weights_by_age = {
         int(row["starting_age"]): row[WEIGHT_COLUMNS].to_numpy(dtype=float)
         for _, row in age_weight_path.iterrows()
@@ -214,10 +215,12 @@ def terminal_balances_with_start_age_contribution(
             balances = (balances + contribution) * (1 + year_returns)
 
         balance_65 = balances.copy()
+        outcomes_by_age = {RETIREMENT_AGE: balance_65.copy()}
         for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
             year_returns = asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
             balances = (balances - WITHDRAWAL_RATE * balance_65) * (1 + year_returns)
-        result[start_age] = np.maximum(balances, PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR)
+            outcomes_by_age[age] = balances.copy()
+        result[start_age] = outcomes_by_age
     return result
 
 
@@ -250,6 +253,19 @@ def summarize_terminal_values(values: np.ndarray) -> dict[str, float]:
     }
 
 
+def summarize_pre_retirement_outcomes(outcomes_by_age: dict[int, np.ndarray]) -> dict[str, float]:
+    rows = [
+        summarize_terminal_values(
+            np.maximum(outcomes_by_age[age], PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR)
+        )
+        for age in RETIREMENT_EVALUATION_AGES
+    ]
+    return {
+        column: float(np.mean([row[column] for row in rows]))
+        for column, _label in METRICS
+    }
+
+
 def evaluate_paths(
     returns: pd.DataFrame,
     paths: np.ndarray,
@@ -266,18 +282,18 @@ def evaluate_paths(
             age_weight_path=weight_path,
             contribution_by_start_age=contribution_by_start_age,
         )
-        for start_age, terminal in terminal_by_age.items():
+        for start_age, outcomes_by_age in terminal_by_age.items():
             pre_rows.append(
                 {
                     "approach": approach,
                     "starting_age": start_age,
-                    **summarize_terminal_values(terminal),
+                    **summarize_pre_retirement_outcomes(outcomes_by_age),
                     "annual_contribution": contribution_by_start_age[start_age],
                     "normalization": (
-                        "Floored age-90 terminal wealth. Start age 20 begins at 0; "
-                        "later starts begin at 1. Each start uses its own "
-                        "constant annual contribution through age 65. "
-                        "Pre-retirement comparisons floor terminal wealth at 0."
+                        "Mean over floored retirement-age wealth outcomes from "
+                        "age 65 through 90. Start age 20 begins at 0; later "
+                        "starts begin at 1. Each start uses its own constant "
+                        "annual contribution through age 65."
                     ),
                 }
             )
@@ -386,7 +402,7 @@ def plot_pre_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
     for ax in axes[-1]:
         ax.set_xlabel("Starting age")
     for ax in axes[:, 0]:
-        ax.set_ylabel("Age-90 terminal wealth")
+        ax.set_ylabel("Mean wealth across ages 65-90")
     handles, labels = axes_flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.01))
     fig.savefig(output_pdf)
