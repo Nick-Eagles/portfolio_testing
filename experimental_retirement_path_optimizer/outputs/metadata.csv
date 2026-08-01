@@ -10,7 +10,7 @@ fixed_retirement_block,65-90
 objective,weighted mean across starting ages 20-65 of the mean worst-4% floored wealth over ages 65-90
 pre_retirement_terminal_wealth_floor,0.0
 contribution_scaling,age 20 contribution is 1; later starting ages use 1 / contribution-reference mean entering balance
-age_65_weight_ratio,8.0
+age_65_weight_ratio,500.0
 endpoint_grid_step,0.05
 bisections,5
 gradient_steps_per_bisection,10

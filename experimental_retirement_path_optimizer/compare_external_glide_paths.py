@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
+from matplotlib.ticker import PercentFormatter
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -410,6 +411,41 @@ def plot_pre_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
     print(f"Wrote {display_path(output_pdf)}")
 
 
+def plot_pre_retirement_age_relative_means(data: pd.DataFrame, output_dir: Path) -> None:
+    output_pdf = output_dir / "experimental_comparison_pre_retirement_grid_age_relative_mean.pdf"
+    relative = data.copy()
+    for metric_column, _panel_title in METRICS:
+        grouped = relative.groupby("starting_age")[metric_column]
+        mean = grouped.transform("mean")
+        relative[metric_column] = (relative[metric_column] - mean) / mean.where(mean != 0, 1.0)
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 11), constrained_layout=True, sharex=True)
+    axes_flat = axes.flatten()
+    for ax, (metric_column, panel_title) in zip(axes_flat, METRICS):
+        for approach, approach_data in relative.groupby("approach", sort=False):
+            ax.plot(
+                approach_data["starting_age"],
+                approach_data[metric_column],
+                color=APPROACH_COLORS.get(approach),
+                linewidth=2.0,
+                label=approach,
+            )
+        ax.axhline(0.0, color="#777777", linewidth=0.8, alpha=0.6)
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+        ax.set_title(panel_title, fontweight="bold", fontsize=11)
+        ax.set_xlim(MIN_STARTING_AGE, RETIREMENT_AGE)
+        ax.grid(alpha=0.2)
+    for ax in axes[-1]:
+        ax.set_xlabel("Starting age")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Percent above/below age mean")
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.01))
+    fig.savefig(output_pdf)
+    plt.close(fig)
+    print(f"Wrote {display_path(output_pdf)}")
+
+
 def plot_post_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
     output_pdf = output_dir / "experimental_comparison_post_retirement_grid.pdf"
     fig, axes = plt.subplots(3, 2, figsize=(12, 11), constrained_layout=True)
@@ -470,6 +506,7 @@ def write_outputs(
     print(f"Wrote {display_path(pre_csv)}")
     print(f"Wrote {display_path(post_csv)}")
     plot_pre_retirement_metrics(pre_retirement, output_dir)
+    plot_pre_retirement_age_relative_means(pre_retirement, output_dir)
     plot_post_retirement_metrics(post_retirement, output_dir)
     plot_random_paths(random_paths, output_dir)
 
