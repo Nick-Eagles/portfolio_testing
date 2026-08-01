@@ -19,6 +19,10 @@ The optimizer:
 5. Represents ages 20 through 65 with bisection control points and optimizes
    those controls with projected Adam. Integer ages are evaluated by linear
    interpolation between controls.
+6. Optionally applies `--smooth` residual smoothing between gradient steps:
+   each asset curve is decomposed into its age-20-to-age-65 straight-line trend
+   plus residuals, the Gaussian kernel smooths only the residuals, and the
+   trend is added back.
 
 `--age-65-weight-ratio` controls the exponential weighting across starting
 ages. It is the raw objective weight at age 65 divided by the raw objective

@@ -17,8 +17,8 @@ Algorithm:
      except horizon 1;
    - optionally apply `--smooth` / `--smoothing-strength` /
      `--smoothing-bandwidth` convex Gaussian-kernel horizon smoothing between
-     gradient steps, using the same stock-then-bond simplex-preserving smoother
-     as `full_path_optimizer`;
+     gradient steps, using a stock-then-bond simplex-preserving smoother that
+     smooths residuals from each asset curve's endpoint-to-endpoint line;
    - optionally stop early with `--early-stop` if the objective has fallen
      below its value from three accepted steps earlier in the same bisection
      iteration;
@@ -31,10 +31,12 @@ When smoothing is enabled, smoothing is applied to the full interpolated
 50-horizon path after each projected Adam step. The optimizer then takes the
 smoothed values at the current control horizons as the next control-point state.
 Horizon 1 is restored to the empirical anchor and horizon 50 is held at its
-post-gradient value during each smoothing pass, matching the full-path
-optimizer's endpoint behavior. `--smoothing-strength` controls the convex blend
-toward the smoothed curve, while `--smoothing-bandwidth` controls how broadly
-the Gaussian kernel averages across horizons.
+post-gradient value during each smoothing pass. For each asset curve, the
+smoother subtracts the straight line between endpoints, applies the Gaussian
+kernel to the residuals, then adds the line back. `--smoothing-strength`
+controls the convex blend toward the smoothed residual curve, while
+`--smoothing-bandwidth` controls how broadly the Gaussian kernel averages across
+horizons.
 
 By default, every bisection iteration carries forward the final gradient step,
 even if an earlier step in that iteration had a better objective. This keeps the

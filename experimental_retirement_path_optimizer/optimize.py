@@ -475,12 +475,16 @@ def smooth_curve_with_fixed_endpoints(values: np.ndarray, strength: float, bandw
     if len(values) <= 2 or strength == 0:
         return smoothed
     ages = OPTIMIZED_AGES.astype(float)
+    trend = np.linspace(values[0], values[-1], len(values))
+    residuals = values - trend
     interior = ages[1:-1]
     distances = interior[:, None] - ages[None, :]
     kernel = np.exp(-0.5 * (distances / bandwidth) ** 2)
     kernel /= kernel.sum(axis=1, keepdims=True)
-    kernel_average = kernel @ values
-    smoothed[1:-1] = (1 - strength) * values[1:-1] + strength * kernel_average
+    kernel_average = kernel @ residuals
+    smoothed[1:-1] = trend[1:-1] + (
+        (1 - strength) * residuals[1:-1] + strength * kernel_average
+    )
     return smoothed
 
 

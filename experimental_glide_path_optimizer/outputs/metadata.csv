@@ -1,6 +1,6 @@
 setting,value
 dataset,from_1927
-num_simulations,50000
+num_simulations,20000
 seed,20260616
 block_length,10
 max_horizon,50
@@ -9,10 +9,10 @@ bisections,5
 gradient_steps_per_bisection,10
 learning_rate,0.02
 smooth,True
-smoothing_strength,0.2
+smoothing_strength,0.1
 smoothing_bandwidth,10.0
 early_stop,True
-horizon_50_weight_ratio,0.01
+horizon_50_weight_ratio,0.001
 endpoint_cache_enabled,True
 endpoint_cache_dir,/home/nick/Documents/programming/portfolio_testing/experimental_glide_path_optimizer/cache/endpoint_search
 endpoint_cache_version,weighted_linear_endpoint_v1
