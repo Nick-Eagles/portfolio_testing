@@ -424,6 +424,91 @@ Current retirement comparison logic:
 - The random paths are plotted in `external_comparisons/retirement_comparison_random_paths.pdf`.
 - Only the random path with the best age-20 worst-4% XIRR score is added to the pre-retirement comparison grid, labeled `Best Random`, so those plots usually show four curves: Ours, Vanguard, Fidelity, and Best Random.
 
+### Experimental Retirement Bisection + Gradient Optimizer
+
+A parallel research branch now lives in `experimental_retirement_path_optimizer/`.
+It should be treated separately from the greedy retirement arm above, not as a
+drop-in replacement.
+
+Core files:
+
+- `experimental_retirement_path_optimizer/optimize.py`
+- `experimental_retirement_path_optimizer/check_gradient.py`
+- `experimental_retirement_path_optimizer/compare_external_glide_paths.py`
+- `experimental_retirement_path_optimizer/README.md`
+
+Current objective and path setup:
+
+- The path covers ages 20 through 90.
+- Ages 65 through 90 are fixed from the selected retirement block loaded from
+  `data/<dataset>/retirement/retirement_path.csv` by default.
+- Ages 20 through 65 are represented with bisection control points and optimized
+  with projected Adam gradient ascent. Integer ages are evaluated by linear
+  interpolation between control points.
+- Age 65 remains fixed to the loaded retirement block's age-65 weights in the
+  main branch. A temporary age-65-only test used an exact one-year downside
+  anchor instead, but that was reverted.
+- The objective uses common random bootstrap paths and an analytic
+  CVaR-style subgradient. Gradient checks are in `check_gradient.py`.
+- Before Adam normalization, each adjustable control-row gradient is projected
+  into the simplex tangent space by subtracting the row mean. This fixed a bug
+  where all-positive gradients became equal-coordinate Adam steps and were
+  erased by simplex projection, making early bisection levels appear inert.
+
+Current contribution model in this branch:
+
+- Contribution constants are derived from a full block-bootstrapped forward
+  accumulation pass using the Fidelity external glide path
+  `external_comparisons/fidelity_glide_path.csv`.
+- Age 20 contributes `1.0`. For later starting ages, the constant is
+  `1 / mean_entering_balance_at_age` from that Fidelity-reference accrual pass.
+- For a given start age, the same start-age-specific constant is used every
+  pre-retirement year through age 65. For example, an age-30 objective term uses
+  the age-30 constant each year from 30 through 65.
+- `optimize.py` writes `outputs/contribution_scales.csv` and automatically
+  generates `plots/contribution_start_constants_by_age.pdf` and `.png`.
+
+Current pre-retirement objective in this branch:
+
+- For each starting age 20 through 65, simulate accumulation through age 65
+  using that start age's constant contribution.
+- Continue through the fixed retirement block, with fixed real withdrawals
+  equal to 3.5% of the simulated age-65 balance.
+- Evaluate wealth outcomes at every age 65 through 90, not only at age 90.
+- Floor those pre-retirement-linked wealth outcomes at 0 before computing
+  downside metrics. This avoids penalizing larger pre-retirement accumulation
+  when a rare post-retirement path has a negative terminal retirement ratio.
+- For each evaluation age, compute the mean of the worst 4% of floored outcomes;
+  then average those downside scores across ages 65 through 90.
+- Finally, combine starting ages 20 through 65 with exponential start-age
+  weights. `--age-65-weight-ratio` is the raw age-65 objective weight divided
+  by the raw age-20 objective weight; the current default is `8.0`.
+
+Important finding from one-off diagnostics:
+
+- Annual contributions alone can strongly incentivize aggressive early
+  pre-retirement allocations, even when the age-65-only objective is used and
+  age 65 is anchored like the glide-path arm's horizon 1. This was surprising
+  relative to earlier glide-path findings and motivated the Fidelity-derived
+  contribution constants and additional comparison diagnostics.
+
+Experimental external comparison logic:
+
+- `experimental_retirement_path_optimizer/compare_external_glide_paths.py`
+  compares the experimental path with Vanguard, Fidelity, and `Best Random`.
+- It reads `final_path.csv` and `contribution_scales.csv` from the experimental
+  optimizer output directory.
+- Pre-retirement comparisons use the same start-age-constant contribution
+  convention and the same mean-over-ages-65-to-90 floored wealth interpretation
+  as `optimize.py`.
+- Standalone post-retirement metrics remain unfloored, so negative retirement
+  outcomes can still help identify poor post-retirement allocations.
+- In addition to the normal pre-retirement grid, the script writes
+  `experimental_comparison_pre_retirement_grid_age_relative_mean.pdf`. This
+  plots `(value - same_age_mean) / same_age_mean` for each metric and starting
+  age, making close path differences easier to see without the potentially
+  misleading amplification of z-scores.
+
 ## Interpretation Notes
 
 Do not over-interpret a single optimal point when nearby portfolios perform similarly.

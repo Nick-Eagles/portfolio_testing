@@ -166,6 +166,8 @@ Primary scripts:
 - `plot_retirement_withdrawal_sweep.py`
 - `external_comparisons/compare_retirement_glide_paths.py`
 - `external_comparisons/plot_external_glide_paths.py`
+- `experimental_retirement_path_optimizer/optimize.py`
+- `experimental_retirement_path_optimizer/compare_external_glide_paths.py`
 
 Important context:
 
@@ -176,6 +178,12 @@ Important context:
   before that fix should be interpreted cautiously.
 - External comparison paths approximate Vanguard and Fidelity target-date-style
   glide paths over the same three asset classes.
+- `experimental_retirement_path_optimizer/` is a parallel research branch using
+  bisection control points plus analytic gradient ascent for ages 20-65 while
+  retaining the selected retirement block. Its current contribution constants
+  are derived from the Fidelity external glide path, and its pre-retirement
+  objective floors wealth at zero and averages downside wealth outcomes across
+  ages 65-90. See that directory's README and `agent_notes.md` for details.
 
 ## Shared Utilities
 
