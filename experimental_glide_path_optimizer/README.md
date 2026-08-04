@@ -15,10 +15,11 @@ Algorithm:
    - bisect every current control-point segment with a simple linear midpoint;
    - run `--gradient-steps` projected Adam ascent steps on all control points
      except horizon 1;
+   - optimize the raw simulation objective minus a Huber curvature penalty on
+     full-path second differences;
    - optionally apply `--smooth` / `--smoothing-strength` /
-     `--smoothing-bandwidth` convex Gaussian-kernel horizon smoothing between
-     gradient steps, using a stock-then-bond simplex-preserving smoother that
-     smooths residuals from each asset curve's endpoint-to-endpoint line;
+     `--smoothing-bandwidth` convex residual smoothing after each regularized
+     gradient step;
    - optionally stop early with `--early-stop` if the objective has fallen
      below its value from three accepted steps earlier in the same bisection
      iteration;
@@ -27,16 +28,22 @@ Algorithm:
 The block-bootstrap Monte Carlo paths are generated once at startup, so every
 objective and gradient call within a run uses common random numbers.
 
-When smoothing is enabled, smoothing is applied to the full interpolated
-50-horizon path after each projected Adam step. The optimizer then takes the
-smoothed values at the current control horizons as the next control-point state.
-Horizon 1 is restored to the empirical anchor and horizon 50 is held at its
-post-gradient value during each smoothing pass. For each asset curve, the
-smoother subtracts the straight line between endpoints, applies the Gaussian
-kernel to the residuals, then adds the line back. `--smoothing-strength`
-controls the convex blend toward the smoothed residual curve, while
-`--smoothing-bandwidth` controls how broadly the Gaussian kernel averages across
-horizons.
+`--curvature-penalty` controls the weight subtracted from the raw simulation
+objective. `--curvature-huber-delta` controls the Huber transition point for
+the L2 norm of each full-path second difference. Set `--curvature-penalty 0`
+to recover the unregularized gradient-ascent objective. Outputs report
+`raw_objective` for the horizons 2-50 objective used by gradient ascent,
+`regularized_objective` after subtracting the curvature penalty, and
+`canonical_objective` for the all-horizon non-regularized score including the
+exact empirical horizon-1 value. They also report `curvature_penalty_value` and
+the subtracted `curvature_penalty_term`; the legacy `objective` column is kept
+as an alias for `regularized_objective`.
+
+When `--smooth` is enabled, smoothing is a post-step projection layered on top
+of the Huber-regularized update. For each asset curve, the smoother subtracts
+the straight line between endpoints, applies a Gaussian kernel to the residuals,
+then adds the line back. Horizon 1 is restored to the empirical anchor and
+horizon 50 is held at its post-gradient value during each smoothing pass.
 
 By default, every bisection iteration carries forward the final gradient step,
 even if an earlier step in that iteration had a better objective. This keeps the

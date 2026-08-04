@@ -32,6 +32,14 @@ greedy or bisection heuristics, the whole path can be optimized at once:
 
 The analytic gradient is verified against finite differences in
 `check_gradient.py` (max relative error ~2e-5, consistent with tail-set ties).
+`optimize.py` also supports a Huber curvature penalty on path second
+differences (`--curvature-penalty`, `--curvature-huber-delta`) and optional
+post-step convex residual smoothing (`--smooth`). `--early-stop` halts a start
+when the current regularized objective is worse than the objective from three
+accepted states ago, then discards the last three states from traces, snapshots,
+and the returned best-path candidate. The regularized gradient is checked by
+`check_regularized_gradient.py`; outputs report raw, regularized, and canonical
+objectives separately.
 
 ## Result (dataset `from_1927`, 20,000 sims, default seed)
 

@@ -34,6 +34,9 @@ from core import (
 from make_plots import plot_end_paths, plot_gradient_snapshots, plot_optimization_traces
 from simulate_glide_path import DEFAULT_SEED
 
+DEFAULT_CURVATURE_PENALTY = 0.0001
+DEFAULT_CURVATURE_HUBER_DELTA = 0.0001
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -43,6 +46,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
     parser.add_argument("--iterations", type=int, default=15)
     parser.add_argument("--learning-rate", type=float, default=0.02)
+    parser.add_argument(
+        "--early-stop",
+        action="store_true",
+        help=(
+            "Stop a start when the objective from 3 accepted states ago is "
+            "better than the current objective. The last 3 states are discarded "
+            "from the returned path, traces, and plots."
+        ),
+    )
+    parser.add_argument(
+        "--curvature-penalty",
+        type=float,
+        default=DEFAULT_CURVATURE_PENALTY,
+        help=(
+            "Huber curvature penalty weight subtracted from the simulation "
+            "objective. Set to 0 to disable regularization."
+        ),
+    )
+    parser.add_argument(
+        "--curvature-huber-delta",
+        type=float,
+        default=DEFAULT_CURVATURE_HUBER_DELTA,
+        help=(
+            "Huber transition point for the L2 norm of each second difference "
+            "in portfolio-weight space."
+        ),
+    )
     parser.add_argument(
         "--horizon-50-weight-ratio",
         type=float,
@@ -57,7 +87,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smooth",
         action="store_true",
-        help="Apply experimental convex horizon smoothing between gradient steps.",
+        help=(
+            "After each Huber-regularized gradient step, apply convex residual "
+            "horizon smoothing before the next step."
+        ),
     )
     parser.add_argument(
         "--smoothing-strength",
@@ -65,8 +98,8 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help=(
             "Convex smoothing weight for each interior horizon when --smooth is set. "
-            "0 leaves the path unchanged; 1 replaces each interior value with a "
-            "kernel-smoothed value. Default is intentionally gentle."
+            "0 leaves the path unchanged; 1 replaces each residual with a "
+            "kernel-smoothed residual. Default is intentionally gentle."
         ),
     )
     parser.add_argument(
@@ -106,12 +139,16 @@ def smooth_curve_with_fixed_endpoints(
         return smoothed
 
     horizons = np.arange(len(values), dtype=float)
+    trend = np.linspace(values[0], values[-1], len(values))
+    residuals = values - trend
     interior = horizons[1:-1]
     distances = interior[:, None] - horizons[None, :]
     kernel = np.exp(-0.5 * (distances / bandwidth) ** 2)
     kernel /= kernel.sum(axis=1, keepdims=True)
-    kernel_average = kernel @ values
-    smoothed[1:-1] = (1 - strength) * values[1:-1] + strength * kernel_average
+    kernel_average = kernel @ residuals
+    smoothed[1:-1] = trend[1:-1] + (
+        (1 - strength) * residuals[1:-1] + strength * kernel_average
+    )
     return smoothed
 
 
@@ -163,6 +200,116 @@ def smooth_path_between_gradient_steps(
     return result
 
 
+def huber_curvature_penalty_and_gradient(
+    weights: np.ndarray,
+    delta: float,
+) -> tuple[float, np.ndarray]:
+    if delta <= 0:
+        raise ValueError("--curvature-huber-delta must be positive.")
+    gradient = np.zeros_like(weights)
+    if len(weights) <= 2:
+        return 0.0, gradient
+
+    second_diff = weights[2:] - 2 * weights[1:-1] + weights[:-2]
+    norms = np.linalg.norm(second_diff, axis=1)
+    quadratic = norms <= delta
+    values = np.empty_like(norms)
+    values[quadratic] = 0.5 * norms[quadratic] ** 2 / delta
+    values[~quadratic] = norms[~quadratic] - 0.5 * delta
+
+    second_diff_gradient = np.zeros_like(second_diff)
+    second_diff_gradient[quadratic] = second_diff[quadratic] / delta
+    nonzero_linear = (~quadratic) & (norms > 0)
+    second_diff_gradient[nonzero_linear] = (
+        second_diff[nonzero_linear] / norms[nonzero_linear, None]
+    )
+
+    gradient[:-2] += second_diff_gradient
+    gradient[1:-1] -= 2 * second_diff_gradient
+    gradient[2:] += second_diff_gradient
+    return float(values.sum()), gradient
+
+
+def regularized_objective_and_gradient(
+    path_returns: np.ndarray,
+    weights: np.ndarray,
+    horizon_50_weight_ratio: float,
+    curvature_penalty: float,
+    curvature_huber_delta: float,
+) -> tuple[float, float, float, np.ndarray]:
+    raw_objective, raw_gradient, _ = objective_and_gradient(
+        path_returns,
+        weights,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+    )
+    penalty_value, penalty_gradient = huber_curvature_penalty_and_gradient(
+        weights,
+        curvature_huber_delta,
+    )
+    regularized_objective = raw_objective - curvature_penalty * penalty_value
+    regularized_gradient = raw_gradient - curvature_penalty * penalty_gradient
+    return raw_objective, penalty_value, regularized_objective, regularized_gradient
+
+
+def regularized_objective_only(
+    path_returns: np.ndarray,
+    weights: np.ndarray,
+    horizon_50_weight_ratio: float,
+    curvature_penalty: float,
+    curvature_huber_delta: float,
+) -> tuple[float, float, float]:
+    raw_objective, _, _ = objective_and_gradient(
+        path_returns,
+        weights,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+    )
+    penalty_value, _ = huber_curvature_penalty_and_gradient(
+        weights,
+        curvature_huber_delta,
+    )
+    regularized_objective = raw_objective - curvature_penalty * penalty_value
+    return raw_objective, penalty_value, regularized_objective
+
+
+def evaluated_state_row(
+    path_returns: np.ndarray,
+    asset_returns: np.ndarray,
+    weights: np.ndarray,
+    iteration: int,
+    horizon_50_weight_ratio: float,
+    curvature_penalty: float,
+    curvature_huber_delta: float,
+    smooth: bool,
+    smoothing_strength: float,
+    smoothing_bandwidth: float,
+) -> dict[str, float | int | bool]:
+    raw_objective, penalty_value, regularized_objective = regularized_objective_only(
+        path_returns,
+        weights,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+        curvature_penalty=curvature_penalty,
+        curvature_huber_delta=curvature_huber_delta,
+    )
+    canonical_objective = path_objective(
+        path_returns,
+        weights,
+        asset_returns,
+        horizon_50_weight_ratio=horizon_50_weight_ratio,
+    )
+    return {
+        "iteration": iteration,
+        "raw_objective": raw_objective,
+        "curvature_penalty_value": penalty_value,
+        "curvature_penalty_term": curvature_penalty * penalty_value,
+        "regularized_objective": regularized_objective,
+        "canonical_objective": canonical_objective,
+        "objective": regularized_objective,
+        "smooth": smooth,
+        "smoothing_strength": smoothing_strength if smooth else 0.0,
+        "smoothing_bandwidth": smoothing_bandwidth if smooth else 0.0,
+    }
+
+
 def build_starts(
     dataset: str,
     horizon_one: np.ndarray,
@@ -193,15 +340,19 @@ def build_starts(
 
 def optimize_from_start(
     path_returns: np.ndarray,
+    asset_returns: np.ndarray,
     initial_weights: np.ndarray,
     horizon_one: np.ndarray,
     iterations: int,
     learning_rate: float,
     horizon_50_weight_ratio: float,
+    curvature_penalty: float,
+    curvature_huber_delta: float,
     smooth: bool,
     smoothing_strength: float,
     smoothing_bandwidth: float,
-) -> tuple[np.ndarray, list[float], list[pd.DataFrame]]:
+    early_stop: bool,
+) -> tuple[np.ndarray, pd.DataFrame, list[pd.DataFrame]]:
     """Projected Adam ascent; horizon-1 row is held fixed."""
     weights = initial_weights.copy()
     weights[0] = horizon_one
@@ -210,21 +361,33 @@ def optimize_from_start(
     second_moment = np.zeros_like(weights)
     beta1, beta2, epsilon = 0.9, 0.999, 1e-9
 
-    best_weights = weights.copy()
-    best_objective = -np.inf
-    trace: list[float] = []
+    trace_rows = [
+        evaluated_state_row(
+            path_returns,
+            asset_returns,
+            weights,
+            iteration=0,
+            horizon_50_weight_ratio=horizon_50_weight_ratio,
+            curvature_penalty=curvature_penalty,
+            curvature_huber_delta=curvature_huber_delta,
+            smooth=smooth,
+            smoothing_strength=smoothing_strength,
+            smoothing_bandwidth=smoothing_bandwidth,
+        )
+    ]
+    weight_history = [weights.copy()]
     trajectory = [weights_to_frame(weights).assign(iteration=0)]
 
     for step in range(1, iterations + 1):
-        objective, gradient, _ = objective_and_gradient(
-            path_returns,
-            weights,
-            horizon_50_weight_ratio=horizon_50_weight_ratio,
+        raw_objective, penalty_value, regularized_objective, gradient = (
+            regularized_objective_and_gradient(
+                path_returns,
+                weights,
+                horizon_50_weight_ratio=horizon_50_weight_ratio,
+                curvature_penalty=curvature_penalty,
+                curvature_huber_delta=curvature_huber_delta,
+            )
         )
-        trace.append(objective)
-        if objective > best_objective:
-            best_objective = objective
-            best_weights = weights.copy()
 
         gradient[0] = 0.0  # horizon 1 is anchored
         first_moment = beta1 * first_moment + (1 - beta1) * gradient
@@ -245,20 +408,39 @@ def optimize_from_start(
                 smoothing_strength,
                 smoothing_bandwidth,
             )
+        trace_rows.append(
+            evaluated_state_row(
+                path_returns,
+                asset_returns,
+                weights,
+                iteration=step,
+                horizon_50_weight_ratio=horizon_50_weight_ratio,
+                curvature_penalty=curvature_penalty,
+                curvature_huber_delta=curvature_huber_delta,
+                smooth=smooth,
+                smoothing_strength=smoothing_strength,
+                smoothing_bandwidth=smoothing_bandwidth,
+            )
+        )
+        weight_history.append(weights.copy())
         trajectory.append(weights_to_frame(weights).assign(iteration=step))
 
-    # Final evaluation to allow the last iterate to win.
-    objective, _, _ = objective_and_gradient(
-        path_returns,
-        weights,
-        horizon_50_weight_ratio=horizon_50_weight_ratio,
-    )
-    trace.append(objective)
-    if objective > best_objective:
-        best_objective = objective
-        best_weights = weights.copy()
+        if (
+            early_stop
+            and len(trace_rows) >= 4
+            and trace_rows[-4]["regularized_objective"] > trace_rows[-1]["regularized_objective"]
+        ):
+            trace_rows = trace_rows[:-3]
+            weight_history = weight_history[:-3]
+            trajectory = trajectory[:-3]
+            weights = weight_history[-1].copy()
+            break
 
-    return best_weights, trace, trajectory
+    best_index = int(
+        np.argmax([row["regularized_objective"] for row in trace_rows])
+    )
+    best_weights = weight_history[best_index].copy()
+    return best_weights, pd.DataFrame(trace_rows), trajectory
 
 
 def average_random_paths(
@@ -278,6 +460,10 @@ def average_random_paths(
 
 def main() -> None:
     args = parse_args()
+    if args.curvature_penalty < 0:
+        raise ValueError("--curvature-penalty must be non-negative.")
+    if args.curvature_huber_delta <= 0:
+        raise ValueError("--curvature-huber-delta must be positive.")
     if not 0 <= args.smoothing_strength <= 1:
         raise ValueError("--smoothing-strength must be between 0 and 1.")
     if args.smoothing_bandwidth <= 0:
@@ -313,15 +499,21 @@ def main() -> None:
         began = time.time()
         weights, trace, trajectory = optimize_from_start(
             path_returns=path_returns,
+            asset_returns=asset_returns,
             initial_weights=project_path_to_simplex(initial_weights),
             horizon_one=horizon_one,
             iterations=args.iterations,
             learning_rate=args.learning_rate,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            curvature_penalty=args.curvature_penalty,
+            curvature_huber_delta=args.curvature_huber_delta,
             smooth=args.smooth,
             smoothing_strength=args.smoothing_strength,
             smoothing_bandwidth=args.smoothing_bandwidth,
+            early_stop=args.early_stop,
         )
+        final_row = trace.iloc[-1]
+        best_row = trace.sort_values("regularized_objective", ascending=False).iloc[0]
         canonical = path_objective(
             path_returns,
             weights,
@@ -332,25 +524,31 @@ def main() -> None:
         results.append(
             {
                 "start": name,
-                "initial_objective": trace[0],
-                "final_objective": trace[-1],
-                "best_sim_objective": max(trace),
+                "initial_raw_objective": trace.iloc[0]["raw_objective"],
+                "initial_regularized_objective": trace.iloc[0]["regularized_objective"],
+                "final_raw_objective": final_row["raw_objective"],
+                "final_regularized_objective": final_row["regularized_objective"],
+                "best_raw_objective": best_row["raw_objective"],
+                "best_regularized_objective": best_row["regularized_objective"],
                 "canonical_objective": canonical,
+                "curvature_penalty_value": final_row["curvature_penalty_value"],
+                "curvature_penalty_term": final_row["curvature_penalty_term"],
+                "trace_states": len(trace),
+                "early_stop": args.early_stop,
                 "seconds": round(elapsed, 1),
             }
         )
-        traces.append(
-            pd.DataFrame(
-                {"start": name, "iteration": np.arange(len(trace)), "objective": trace}
-            )
-        )
+        traces.append(trace.assign(start=name))
         optimized_paths[name] = weights.copy()
         weights_to_frame(weights).to_csv(start_paths_dir / f"{name}.csv", index=False)
         pd.concat(trajectory, ignore_index=True).to_csv(
             trajectories_dir / f"{name}.csv", index=False
         )
         print(
-            f"{name}: sim objective {trace[0]:.6f} -> {max(trace):.6f}, "
+            f"{name}: raw {trace.iloc[0]['raw_objective']:.6f} -> "
+            f"{best_row['raw_objective']:.6f}, "
+            f"regularized {trace.iloc[0]['regularized_objective']:.6f} -> "
+            f"{best_row['regularized_objective']:.6f}, "
             f"canonical {canonical:.6f} ({elapsed:.0f}s)"
         )
         if canonical > best_score:
@@ -364,18 +562,31 @@ def main() -> None:
             asset_returns,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
         )
-        random_average_sim = path_objective(
+        (
+            random_average_raw,
+            random_average_penalty,
+            random_average_regularized,
+        ) = regularized_objective_only(
             path_returns,
             random_average_weights,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            curvature_penalty=args.curvature_penalty,
+            curvature_huber_delta=args.curvature_huber_delta,
         )
         results.append(
             {
                 "start": "random_average",
-                "initial_objective": np.nan,
-                "final_objective": random_average_sim,
-                "best_sim_objective": random_average_sim,
+                "initial_raw_objective": np.nan,
+                "initial_regularized_objective": np.nan,
+                "final_raw_objective": random_average_raw,
+                "final_regularized_objective": random_average_regularized,
+                "best_raw_objective": random_average_raw,
+                "best_regularized_objective": random_average_regularized,
                 "canonical_objective": random_average_canonical,
+                "curvature_penalty_value": random_average_penalty,
+                "curvature_penalty_term": args.curvature_penalty * random_average_penalty,
+                "trace_states": 1,
+                "early_stop": args.early_stop,
                 "seconds": 0.0,
             }
         )
@@ -385,7 +596,8 @@ def main() -> None:
         )
         print(
             "random_average: "
-            f"sim objective {random_average_sim:.6f}, "
+            f"raw {random_average_raw:.6f}, "
+            f"regularized {random_average_regularized:.6f}, "
             f"canonical {random_average_canonical:.6f}"
         )
 

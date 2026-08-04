@@ -19,10 +19,12 @@ The optimizer:
 5. Represents ages 20 through 65 with bisection control points and optimizes
    those controls with projected Adam. Integer ages are evaluated by linear
    interpolation between controls.
-6. Optionally applies `--smooth` residual smoothing between gradient steps:
-   each asset curve is decomposed into its age-20-to-age-65 straight-line trend
-   plus residuals, the Gaussian kernel smooths only the residuals, and the
-   trend is added back.
+6. Optimizes the raw retirement objective minus a Huber curvature penalty on
+   second differences across the age-20-to-age-65 accumulation path.
+7. Optionally applies `--smooth` residual smoothing after each regularized
+   gradient step: each asset curve is decomposed into its age-20-to-age-65
+   straight-line trend plus residuals, the Gaussian kernel smooths only the
+   residuals, and the trend is added back.
 
 `--age-65-weight-ratio` controls the exponential weighting across starting
 ages. It is the raw objective weight at age 65 divided by the raw objective
@@ -35,6 +37,12 @@ reference pass, so each starting age has a differentiable balance recursion.
 The worst-tail mean uses the same CVaR-style subgradient as the full-path
 optimizer: average terminal-wealth gradients across the current worst-tail
 simulations.
+
+`--curvature-penalty` controls the regularization strength, and
+`--curvature-huber-delta` controls the Huber transition point for the L2 norm
+of each second difference. Outputs report both `raw_objective` and
+`regularized_objective`; the legacy `objective` column is kept as an alias for
+`regularized_objective`.
 
 Pre-retirement objective and comparison metrics floor wealth at 0 before
 computing worst-tail means for ages 65 through 90. Standalone post-retirement
