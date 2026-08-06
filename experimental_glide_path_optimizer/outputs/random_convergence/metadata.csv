@@ -6,10 +6,10 @@ block_length,10
 random_starts,4
 start_seed,6217
 bisections,4
-pre_bisection_gradient_steps,10
+pre_bisection_gradient_steps,0
 gradient_steps_per_bisection,10
 learning_rate,0.04
-curvature_penalty,0.0
+curvature_penalty,0.0001
 curvature_huber_delta,0.0001
 horizon_50_weight_ratio,0.001
 min_gradient_horizon,1

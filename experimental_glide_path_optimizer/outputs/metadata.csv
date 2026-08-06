@@ -10,9 +10,9 @@ gradient_steps_per_bisection,10
 learning_rate,0.04
 curvature_penalty,0.0001
 curvature_huber_delta,0.0001
-smooth,False
-smoothing_strength,0.0
-smoothing_bandwidth,0.0
+smooth,True
+smoothing_strength,0.2
+smoothing_bandwidth,10.0
 early_stop,True
 horizon_50_weight_ratio,1.0
 endpoint_cache_enabled,True
