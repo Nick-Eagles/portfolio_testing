@@ -27,6 +27,7 @@ from core import (
     make_shared_path_returns,
     objective_and_gradient,
     path_objective,
+    project_gradient_to_simplex_tangent,
     project_path_to_simplex,
     select_exact_horizon_one,
     weights_to_frame,
@@ -377,6 +378,8 @@ def optimize_from_start(
     ]
     weight_history = [weights.copy()]
     trajectory = [weights_to_frame(weights).assign(iteration=0)]
+    fixed_mask = np.zeros(len(weights), dtype=bool)
+    fixed_mask[0] = True  # horizon 1 is anchored
 
     for step in range(1, iterations + 1):
         raw_objective, penalty_value, regularized_objective, gradient = (
@@ -389,16 +392,19 @@ def optimize_from_start(
             )
         )
 
-        gradient[0] = 0.0  # horizon 1 is anchored
+        gradient = project_gradient_to_simplex_tangent(gradient, fixed_mask)
         first_moment = beta1 * first_moment + (1 - beta1) * gradient
         second_moment = beta2 * second_moment + (1 - beta2) * gradient**2
         corrected_first = first_moment / (1 - beta1**step)
         corrected_second = second_moment / (1 - beta2**step)
 
         step_scale = learning_rate * min(1.0, 10 * (1 - step / (iterations + 1)))
-        weights = weights + step_scale * corrected_first / (
-            np.sqrt(corrected_second) + epsilon
+        adam_direction = corrected_first / (np.sqrt(corrected_second) + epsilon)
+        adam_direction = project_gradient_to_simplex_tangent(
+            adam_direction,
+            fixed_mask,
         )
+        weights = weights + step_scale * adam_direction
         weights = project_path_to_simplex(weights)
         weights[0] = horizon_one
         if smooth:

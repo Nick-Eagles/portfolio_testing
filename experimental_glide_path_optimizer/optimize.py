@@ -45,6 +45,7 @@ from full_path_optimizer.core import (
     make_shared_path_returns,
     objective_and_gradient,
     path_objective,
+    project_gradient_to_simplex_tangent,
     project_path_to_simplex,
     select_exact_horizon_one,
     weights_to_frame,
@@ -649,16 +650,22 @@ def optimize_control_points(
             curvature_huber_delta=curvature_huber_delta,
         )
         control_gradient = jacobian.T @ full_gradient
-        control_gradient[fixed_mask] = 0.0
+        control_gradient = project_gradient_to_simplex_tangent(
+            control_gradient,
+            fixed_mask,
+        )
 
         first_moment = beta1 * first_moment + (1 - beta1) * control_gradient
         second_moment = beta2 * second_moment + (1 - beta2) * control_gradient**2
         corrected_first = first_moment / (1 - beta1**local_step)
         corrected_second = second_moment / (1 - beta2**local_step)
         step_scale = learning_rate * min(1.0, 10 * (1 - local_step / (steps + 1)))
-        values = values + step_scale * corrected_first / (
-            np.sqrt(corrected_second) + epsilon
+        adam_direction = corrected_first / (np.sqrt(corrected_second) + epsilon)
+        adam_direction = project_gradient_to_simplex_tangent(
+            adam_direction,
+            fixed_mask,
         )
+        values = values + step_scale * adam_direction
         values = project_path_to_simplex(values)
         values[fixed_mask] = control_points[1]
         if smooth:

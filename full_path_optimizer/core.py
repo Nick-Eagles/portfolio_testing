@@ -257,3 +257,19 @@ def frame_to_weights(frame: pd.DataFrame, max_horizon: int = MAX_HORIZON) -> np.
 
 def project_path_to_simplex(weights: np.ndarray) -> np.ndarray:
     return project_rows_to_simplex(weights)
+
+
+def project_gradient_to_simplex_tangent(
+    gradient: np.ndarray,
+    fixed_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Remove each adjustable row's component normal to the simplex."""
+    result = gradient.copy()
+    if fixed_mask is None:
+        result -= result.mean(axis=1, keepdims=True)
+        return result
+
+    adjustable = ~fixed_mask
+    result[adjustable] -= result[adjustable].mean(axis=1, keepdims=True)
+    result[fixed_mask] = 0.0
+    return result
