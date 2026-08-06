@@ -45,6 +45,7 @@ from full_path_optimizer.core import (
     make_shared_path_returns,
     objective_and_gradient,
     path_objective,
+    project_gradient_to_simplex_tangent,
     project_path_to_simplex,
     weights_to_frame,
 )
@@ -78,6 +79,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-seed", type=int, default=DEFAULT_START_SEED)
     parser.add_argument("--bisections", type=int, default=DEFAULT_BISECTIONS)
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
+    parser.add_argument(
+        "--pre-bisection-gradient-steps",
+        type=int,
+        default=0,
+        help=(
+            "Optional projected Adam steps before the first bisection, while "
+            "the path is still represented by only the random horizon-1 and "
+            "horizon-50 endpoint controls."
+        ),
+    )
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument(
         "--curvature-penalty",
@@ -150,6 +161,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--bisections must be non-negative.")
     if args.gradient_steps < 0:
         raise ValueError("--gradient-steps must be non-negative.")
+    if args.pre_bisection_gradient_steps < 0:
+        raise ValueError("--pre-bisection-gradient-steps must be non-negative.")
     if args.learning_rate <= 0:
         raise ValueError("--learning-rate must be positive.")
     if args.curvature_penalty < 0:
@@ -303,15 +316,16 @@ def optimize_control_points_unanchored(
             min_gradient_horizon=min_gradient_horizon,
         )
         control_gradient = jacobian.T @ full_gradient
+        control_gradient = project_gradient_to_simplex_tangent(control_gradient)
 
         first_moment = beta1 * first_moment + (1 - beta1) * control_gradient
         second_moment = beta2 * second_moment + (1 - beta2) * control_gradient**2
         corrected_first = first_moment / (1 - beta1**local_step)
         corrected_second = second_moment / (1 - beta2**local_step)
         step_scale = learning_rate * min(1.0, 10 * (1 - local_step / (steps + 1)))
-        values = values + step_scale * corrected_first / (
-            np.sqrt(corrected_second) + epsilon
-        )
+        adam_direction = corrected_first / (np.sqrt(corrected_second) + epsilon)
+        adam_direction = project_gradient_to_simplex_tangent(adam_direction)
+        values = values + step_scale * adam_direction
         values = project_path_to_simplex(values)
 
         if smooth:
@@ -382,6 +396,22 @@ def random_endpoint_starts(
     return starts
 
 
+def endpoint_frame(starts: dict[str, dict[int, np.ndarray]]) -> pd.DataFrame:
+    rows = []
+    for start, control_points in starts.items():
+        for horizon, weights in sorted(control_points.items()):
+            rows.append(
+                {
+                    "start": start,
+                    "horizon": horizon,
+                    "stock_weight": weights[0],
+                    "bond_weight": weights[1],
+                    "t_bill_weight": weights[2],
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def trajectory_frame(
     control_points: dict[int, np.ndarray],
     global_step: int,
@@ -423,6 +453,62 @@ def plot_optimization_traces(traces: pd.DataFrame, output_pdf: Path) -> None:
         ax.grid(alpha=0.25)
     axes[0].legend(frameon=False, fontsize=7, ncol=2)
     fig.suptitle("Bisection + gradient-ascent traces from random endpoints")
+    fig.savefig(output_pdf)
+    plt.close(fig)
+
+
+def plot_starting_endpoints(endpoints: pd.DataFrame, output_pdf: Path) -> None:
+    fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
+    draw_simplex_outline(ax)
+
+    coords = add_simplex_coordinates(endpoints)
+    horizon_one = coords[coords["horizon"] == 1]
+    horizon_50 = coords[coords["horizon"] == MAX_HORIZON]
+
+    for start, group in coords.groupby("start"):
+        ordered = group.sort_values("horizon")
+        ax.plot(
+            ordered["simplex_x"],
+            ordered["simplex_y"],
+            color="#777777",
+            linewidth=0.9,
+            alpha=0.45,
+            zorder=2,
+        )
+        midpoint = ordered[["simplex_x", "simplex_y"]].mean()
+        ax.text(
+            midpoint["simplex_x"],
+            midpoint["simplex_y"],
+            start.replace("random_", ""),
+            fontsize=7,
+            color="#444444",
+            ha="center",
+            va="center",
+            alpha=0.85,
+            zorder=6,
+        )
+
+    ax.scatter(
+        horizon_one["simplex_x"],
+        horizon_one["simplex_y"],
+        color="#1f77b4",
+        marker="s",
+        s=45,
+        label="horizon 1",
+        zorder=4,
+    )
+    ax.scatter(
+        horizon_50["simplex_x"],
+        horizon_50["simplex_y"],
+        color="#d95f02",
+        marker="^",
+        s=52,
+        label="horizon 50",
+        zorder=5,
+    )
+    ax.set_title("Random starting endpoints")
+    ax.set_aspect("equal")
+    ax.legend(frameon=False, loc="upper left")
     fig.savefig(output_pdf)
     plt.close(fig)
 
@@ -504,6 +590,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("random_starts", args.random_starts),
             ("start_seed", args.start_seed),
             ("bisections", args.bisections),
+            ("pre_bisection_gradient_steps", args.pre_bisection_gradient_steps),
             ("gradient_steps_per_bisection", args.gradient_steps),
             ("learning_rate", args.learning_rate),
             ("curvature_penalty", args.curvature_penalty),
@@ -545,6 +632,10 @@ def main() -> None:
         block_length=args.block_length,
     )
     starts = random_endpoint_starts(args.random_starts, args.start_seed)
+    endpoints = endpoint_frame(starts)
+    endpoints_csv = args.output_dir / "starting_endpoints.csv"
+    endpoints.to_csv(endpoints_csv, index=False)
+    plot_starting_endpoints(endpoints, args.plot_dir / "starting_endpoints.pdf")
 
     summaries: list[dict[str, float | int | str]] = []
     trace_frames: list[pd.DataFrame] = []
@@ -575,6 +666,28 @@ def main() -> None:
                 smoothing_bandwidth=args.smoothing_bandwidth,
             )
         ]
+
+        if args.pre_bisection_gradient_steps:
+            control_points, rows, global_step = optimize_control_points_unanchored(
+                path_returns=path_returns,
+                asset_returns=asset_returns,
+                control_points=control_points,
+                start=start,
+                steps=args.pre_bisection_gradient_steps,
+                learning_rate=args.learning_rate,
+                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+                curvature_penalty=args.curvature_penalty,
+                curvature_huber_delta=args.curvature_huber_delta,
+                min_gradient_horizon=args.min_gradient_horizon,
+                smooth=args.smooth,
+                smoothing_strength=args.smoothing_strength,
+                smoothing_bandwidth=args.smoothing_bandwidth,
+                early_stop=args.early_stop,
+                bisection_iteration=0,
+                starting_step=global_step,
+            )
+            trace_rows.extend(rows)
+            trajectory.append(trajectory_frame(control_points, global_step, 0, start))
 
         for bisection_iteration in range(1, args.bisections + 1):
             control_points = bisect_control_points(control_points)
@@ -645,6 +758,7 @@ def main() -> None:
                 "best_regularized_objective": best_row["regularized_objective"],
                 "best_canonical_objective": best_row["canonical_objective"],
                 "final_control_point_count": len(control_points),
+                "pre_bisection_gradient_steps": args.pre_bisection_gradient_steps,
                 "trace_states": len(trace),
                 "seconds": round(elapsed, 1),
             }
@@ -677,6 +791,8 @@ def main() -> None:
         f"{best['final_canonical_objective']:.6f}"
     )
     print(f"wrote {args.output_dir / 'optimization_start_summary.csv'}")
+    print(f"wrote {endpoints_csv}")
+    print(f"wrote {args.plot_dir / 'starting_endpoints.pdf'}")
     print(f"wrote {args.plot_dir / 'optimization_traces.pdf'}")
     print(f"wrote {args.plot_dir / 'end_paths.pdf'}")
 
