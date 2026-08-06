@@ -1,5 +1,5 @@
 --horizon-50-weight-ratio 1
---curvature-penalty 0.0001
+--curvature-penalty 0
 --curvature-huber-delta 0.0001
 --smooth
 --smoothing-bandwidth 10
@@ -8,4 +8,4 @@
 --bisections 5 
 --early-stop
 --learning-rate 0.04
--0.002937
+-0.002929
