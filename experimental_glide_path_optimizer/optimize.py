@@ -1,11 +1,11 @@
 """Experimental bisection + full-path gradient-ascent glide-path optimizer.
 
-The algorithm fixes horizon 1 at the empirical one-year optimum, chooses the
-horizon-50 endpoint by exhaustive simplex-grid search under the weighted
+The algorithm initializes horizon 1 at the empirical one-year optimum, chooses
+the horizon-50 endpoint by exhaustive simplex-grid search under the weighted
 full-path objective, and then alternates:
 
 1. bisect every current control segment with a linear midpoint;
-2. run projected Adam ascent on all control points except horizon 1.
+2. run projected Adam ascent on all control points.
 
 Integer horizons are always evaluated on the piecewise-linear interpolation of
 the current control points. The Monte Carlo paths are generated once at startup,
@@ -58,8 +58,8 @@ DEFAULT_GRADIENT_STEPS = 10
 DEFAULT_LEARNING_RATE = 0.04
 DEFAULT_ENDPOINT_CHUNK_SIZE = 16
 DEFAULT_ENDPOINT_GRID_STEP = 0.05
-DEFAULT_CURVATURE_PENALTY = 0.0001
-DEFAULT_CURVATURE_HUBER_DELTA = 0.0001
+DEFAULT_CURVATURE_PENALTY = 0.001
+DEFAULT_CURVATURE_HUBER_DELTA = 0.1
 DEFAULT_SMOOTHING_STRENGTH = 0.2
 DEFAULT_SMOOTHING_BANDWIDTH = 10.0
 ENDPOINT_CACHE_VERSION = "weighted_linear_endpoint_v1"
@@ -248,7 +248,7 @@ def rescale_bonds_and_bills_after_stock_smoothing(
 
 def smooth_path_between_gradient_steps(
     weights: np.ndarray,
-    horizon_one: np.ndarray,
+    first_endpoint: np.ndarray,
     strength: float,
     bandwidth: float,
 ) -> np.ndarray:
@@ -268,7 +268,7 @@ def smooth_path_between_gradient_steps(
     result[:, 2] = 1 - result[:, 0] - result[:, 1]
     result = np.clip(result, 0.0, 1.0)
     result = project_path_to_simplex(result)
-    result[0] = horizon_one
+    result[0] = first_endpoint
     result[-1] = weights[-1]
     return result
 
@@ -314,6 +314,7 @@ def regularized_objective_and_gradient(
     raw_objective, raw_gradient, _ = objective_and_gradient(
         path_returns,
         weights,
+        min_horizon=1,
         horizon_50_weight_ratio=horizon_50_weight_ratio,
     )
     penalty_value, penalty_gradient = huber_curvature_penalty_and_gradient(
@@ -340,6 +341,7 @@ def regularized_objective_only(
     raw_objective, _, _ = objective_and_gradient(
         path_returns,
         weights,
+        min_horizon=1,
         horizon_50_weight_ratio=horizon_50_weight_ratio,
     )
     penalty_value, _ = huber_curvature_penalty_and_gradient(
@@ -625,7 +627,7 @@ def optimize_control_points(
 
     control_horizons = sorted(control_points)
     values = np.vstack([control_points[horizon] for horizon in control_horizons])
-    fixed_mask = np.array([horizon == 1 for horizon in control_horizons])
+    fixed_mask = np.zeros(len(control_horizons), dtype=bool)
     jacobian = interpolation_jacobian(control_horizons)
 
     first_moment = np.zeros_like(values)
@@ -667,17 +669,16 @@ def optimize_control_points(
         )
         values = values + step_scale * adam_direction
         values = project_path_to_simplex(values)
-        values[fixed_mask] = control_points[1]
         if smooth:
+            smoothed_input = jacobian @ values
             smoothed_full_path = smooth_path_between_gradient_steps(
-                jacobian @ values,
-                control_points[1],
+                smoothed_input,
+                smoothed_input[0],
                 smoothing_strength,
                 smoothing_bandwidth,
             )
             values = smoothed_full_path[np.array(control_horizons) - 1]
             values = project_path_to_simplex(values)
-            values[fixed_mask] = control_points[1]
 
         global_step += 1
         updated_full_path = jacobian @ values
@@ -845,7 +846,7 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
         )
     ax.set_title("Objective at Every Gradient Step")
     ax.set_xlabel("Gradient step")
-    ax.set_ylabel("Objective (weighted mean worst-4% mean, horizons 2-50)")
+    ax.set_ylabel("Objective (weighted mean worst-4% mean, horizons 1-50)")
     ax.legend()
     ax.grid(alpha=0.25)
     fig.savefig(output_pdf)
@@ -880,7 +881,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ),
             (
                 "raw_objective",
-                "simulation objective optimized by gradient ascent, horizons 2-50",
+                "simulation objective optimized by gradient ascent, horizons 1-50",
             ),
             (
                 "canonical_objective",
@@ -890,7 +891,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
                 "path_shape",
                 "piecewise-linear interpolation between optimized control points",
             ),
-            ("horizon_1_anchor", "exact empirical one-year optimum"),
+            ("horizon_1_initialization", "exact empirical one-year optimum"),
         ],
         columns=["setting", "value"],
     )
@@ -926,7 +927,7 @@ def main() -> None:
         block_length=args.block_length,
     )
     horizon_one = select_exact_horizon_one(args.dataset)
-    print(f"horizon-1 anchor: {np.round(horizon_one, 4)}", flush=True)
+    print(f"horizon-1 initialization: {np.round(horizon_one, 4)}", flush=True)
 
     endpoint_cache_settings = {
         "version": ENDPOINT_CACHE_VERSION,

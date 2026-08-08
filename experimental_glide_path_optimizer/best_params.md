@@ -4,7 +4,7 @@
 --smoothing-bandwidth 10
 --smoothing-strength 0.2
 --gradient-steps 10
---bisections 5 
+--bisections 4 
 --early-stop
 --learning-rate 0.04
--0.002836
+-0.002130

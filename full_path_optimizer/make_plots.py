@@ -206,7 +206,7 @@ def plot_optimization_traces(traces_csv: Path, output_pdf: Path) -> None:
     for name, group in traces.groupby("start"):
         ax.plot(group["iteration"], group["objective"], linewidth=1.4, label=name)
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("Simulation objective (mean worst-4% mean, horizons 2-50)")
+    ax.set_ylabel("Simulation objective (mean worst-4% mean, horizons 1-50)")
     ax.set_title("Projected-gradient ascent traces by start")
     ax.grid(alpha=0.25)
     ax.legend(frameon=False, fontsize=8)

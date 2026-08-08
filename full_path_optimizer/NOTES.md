@@ -22,9 +22,8 @@ set at each horizon, scaled by that horizon's objective weight. So instead of
 greedy or bisection heuristics, the whole path can be optimized at once:
 
 1. **Multi-start projected (sub)gradient ascent** (Adam + row-wise simplex
-   projection, horizon 1 held at the exact empirical anchor) from 8 starts:
-   linear-to-stocks, constant anchor, the existing greedy and bisected paths,
-   and 4 random Dirichlet paths. (`optimize.py`)
+   projection, with horizon 1 now optimized rather than anchored) from informed
+   starts and random endpoint-interpolated starts. (`optimize.py`)
 2. **Local coordinate ascent over the 2% grid** (Gauss-Seidel: for each
    horizon, try nearby grid portfolios holding the rest of the path fixed,
    apply improvements immediately, repeat until a sweep-level gain threshold

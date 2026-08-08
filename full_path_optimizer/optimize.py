@@ -1,9 +1,8 @@
 """Direct full-path optimization via multi-start projected (sub)gradient ascent.
 
-Optimizes all horizon weights simultaneously (horizon 1 fixed to the exact
-empirical anchor) against the canonical objective: mean across horizons of the
-per-horizon worst-4% mean of annualized outcomes, on shared block-bootstrap
-paths (common random numbers).
+Optimizes all horizon weights simultaneously against the canonical objective:
+mean across horizons of the per-horizon worst-4% mean of annualized outcomes,
+on shared block-bootstrap paths (common random numbers).
 """
 
 from __future__ import annotations
@@ -35,8 +34,8 @@ from core import (
 from make_plots import plot_end_paths, plot_gradient_snapshots, plot_optimization_traces
 from simulate_glide_path import DEFAULT_SEED
 
-DEFAULT_CURVATURE_PENALTY = 0.0001
-DEFAULT_CURVATURE_HUBER_DELTA = 0.0001
+DEFAULT_CURVATURE_PENALTY = 0.001
+DEFAULT_CURVATURE_HUBER_DELTA = 0.1
 
 
 def parse_args() -> argparse.Namespace:
@@ -175,7 +174,7 @@ def rescale_bonds_and_bills_after_stock_smoothing(
 
 def smooth_path_between_gradient_steps(
     weights: np.ndarray,
-    horizon_one: np.ndarray,
+    first_endpoint: np.ndarray,
     strength: float,
     bandwidth: float,
 ) -> np.ndarray:
@@ -196,7 +195,7 @@ def smooth_path_between_gradient_steps(
     result[:, 2] = 1 - result[:, 0] - result[:, 1]
     result = np.clip(result, 0.0, 1.0)
     result = project_path_to_simplex(result)
-    result[0] = horizon_one
+    result[0] = first_endpoint
     result[-1] = weights[-1]
     return result
 
@@ -241,6 +240,7 @@ def regularized_objective_and_gradient(
     raw_objective, raw_gradient, _ = objective_and_gradient(
         path_returns,
         weights,
+        min_horizon=1,
         horizon_50_weight_ratio=horizon_50_weight_ratio,
     )
     penalty_value, penalty_gradient = huber_curvature_penalty_and_gradient(
@@ -262,6 +262,7 @@ def regularized_objective_only(
     raw_objective, _, _ = objective_and_gradient(
         path_returns,
         weights,
+        min_horizon=1,
         horizon_50_weight_ratio=horizon_50_weight_ratio,
     )
     penalty_value, _ = huber_curvature_penalty_and_gradient(
@@ -334,7 +335,10 @@ def build_starts(
 
     rng = np.random.default_rng(start_seed)
     for index in range(random_starts):
-        starts[f"random_{index}"] = rng.dirichlet(np.ones(3), size=MAX_HORIZON)
+        endpoints = rng.dirichlet(np.ones(3), size=2)
+        starts[f"random_{index}"] = endpoints[0] + progress * (
+            endpoints[1] - endpoints[0]
+        )
 
     return starts
 
@@ -343,7 +347,6 @@ def optimize_from_start(
     path_returns: np.ndarray,
     asset_returns: np.ndarray,
     initial_weights: np.ndarray,
-    horizon_one: np.ndarray,
     iterations: int,
     learning_rate: float,
     horizon_50_weight_ratio: float,
@@ -354,9 +357,8 @@ def optimize_from_start(
     smoothing_bandwidth: float,
     early_stop: bool,
 ) -> tuple[np.ndarray, pd.DataFrame, list[pd.DataFrame]]:
-    """Projected Adam ascent; horizon-1 row is held fixed."""
+    """Projected Adam ascent over all horizon rows."""
     weights = initial_weights.copy()
-    weights[0] = horizon_one
 
     first_moment = np.zeros_like(weights)
     second_moment = np.zeros_like(weights)
@@ -378,8 +380,6 @@ def optimize_from_start(
     ]
     weight_history = [weights.copy()]
     trajectory = [weights_to_frame(weights).assign(iteration=0)]
-    fixed_mask = np.zeros(len(weights), dtype=bool)
-    fixed_mask[0] = True  # horizon 1 is anchored
 
     for step in range(1, iterations + 1):
         raw_objective, penalty_value, regularized_objective, gradient = (
@@ -392,7 +392,7 @@ def optimize_from_start(
             )
         )
 
-        gradient = project_gradient_to_simplex_tangent(gradient, fixed_mask)
+        gradient = project_gradient_to_simplex_tangent(gradient)
         first_moment = beta1 * first_moment + (1 - beta1) * gradient
         second_moment = beta2 * second_moment + (1 - beta2) * gradient**2
         corrected_first = first_moment / (1 - beta1**step)
@@ -400,17 +400,13 @@ def optimize_from_start(
 
         step_scale = learning_rate * min(1.0, 10 * (1 - step / (iterations + 1)))
         adam_direction = corrected_first / (np.sqrt(corrected_second) + epsilon)
-        adam_direction = project_gradient_to_simplex_tangent(
-            adam_direction,
-            fixed_mask,
-        )
+        adam_direction = project_gradient_to_simplex_tangent(adam_direction)
         weights = weights + step_scale * adam_direction
         weights = project_path_to_simplex(weights)
-        weights[0] = horizon_one
         if smooth:
             weights = smooth_path_between_gradient_steps(
                 weights,
-                horizon_one,
+                weights[0],
                 smoothing_strength,
                 smoothing_bandwidth,
             )
@@ -451,7 +447,6 @@ def optimize_from_start(
 
 def average_random_paths(
     optimized_paths: dict[str, np.ndarray],
-    horizon_one: np.ndarray,
 ) -> np.ndarray | None:
     random_paths = [
         weights for name, weights in optimized_paths.items() if name.startswith("random_")
@@ -460,7 +455,6 @@ def average_random_paths(
         return None
     averaged = np.mean(random_paths, axis=0)
     averaged = project_path_to_simplex(averaged)
-    averaged[0] = horizon_one
     return averaged
 
 
@@ -488,7 +482,7 @@ def main() -> None:
         block_length=args.block_length,
     )
     horizon_one = select_exact_horizon_one(args.dataset)
-    print(f"horizon-1 anchor: {np.round(horizon_one, 4)}")
+    print(f"empirical horizon-1 reference: {np.round(horizon_one, 4)}")
 
     starts = build_starts(args.dataset, horizon_one, args.random_starts, args.start_seed)
 
@@ -507,7 +501,6 @@ def main() -> None:
             path_returns=path_returns,
             asset_returns=asset_returns,
             initial_weights=project_path_to_simplex(initial_weights),
-            horizon_one=horizon_one,
             iterations=args.iterations,
             learning_rate=args.learning_rate,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
@@ -560,7 +553,7 @@ def main() -> None:
         if canonical > best_score:
             best_name, best_weights, best_score = name, weights, canonical
 
-    random_average_weights = average_random_paths(optimized_paths, horizon_one)
+    random_average_weights = average_random_paths(optimized_paths)
     if random_average_weights is not None:
         random_average_canonical = path_objective(
             path_returns,

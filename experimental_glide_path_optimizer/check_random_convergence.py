@@ -114,8 +114,8 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help=(
             "First horizon included in the analytic gradient objective. The "
-            "main optimizer uses 2 because horizon 1 is anchored; this random "
-            "convergence probe defaults to 1."
+            "random convergence probe defaults to 1 so random horizon-1 "
+            "endpoints can move under their own objective contribution."
         ),
     )
     parser.add_argument(
