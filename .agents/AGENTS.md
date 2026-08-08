@@ -113,7 +113,9 @@ Important shared context:
 
 - The current downside objective is usually `worst_4pct_mean`: the mean
   annualized return among the worst 4% of outcomes.
-- Horizon 1 is anchored using exact empirical one-year outcomes.
+- The greedy/local-search scripts still use exact empirical one-year handling
+  for horizon 1, but the newer gradient optimizers now treat horizon 1 as an
+  optimizable row rather than a fixed anchor.
 - Neighborhood-limited search and projected continuation are used to reduce
   noise and cost.
 
@@ -122,8 +124,13 @@ Full-path optimizer:
 - `full_path_optimizer/` is a newer, substantial glide-path approach that builds
   on lessons from the greedy and bisected algorithms.
 - It treats the whole 50x3 path as the optimization object, uses fixed bootstrap
-  paths/common random numbers, and performs projected gradient ascent. Convex
-  smoothing between gradient steps is an active experimental stabilizer.
+  paths/common random numbers, and performs projected gradient ascent over
+  horizons 1-50. Convex smoothing between gradient steps is an active
+  experimental stabilizer.
+- Gradient-based simplex updates must remove each row's normal component before
+  Adam moments and again after Adam's per-coordinate scaling; otherwise
+  equal-coordinate moves can be projected away and make starts look falsely
+  stalled.
 - Coordinate polishing exists, but recent exploratory work made it look more
   like a historical-data overfitting step than a source of more plausible paths;
   do not treat the polished path as automatically preferable to the
@@ -139,7 +146,11 @@ Experimental bisection/gradient optimizer:
 - `experimental_glide_path_optimizer/` is a newer research branch that combines
   bisection control points with the full-path analytic gradient. It supports
   endpoint caching and optional convex smoothing, but should be treated as
-  exploratory.
+  exploratory. It initializes horizon 1 from the empirical one-year point, then
+  allows gradient ascent to adjust it.
+- `experimental_glide_path_optimizer/check_random_convergence.py` is a
+  diagnostic script for random endpoint-initialized bisection/control-point
+  runs; it plots starting endpoints, traces, and final paths.
 
 Current research caution:
 

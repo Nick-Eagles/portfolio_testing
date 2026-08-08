@@ -213,8 +213,10 @@ High-level idea:
 
 - Freeze a shared set of bootstrap paths first, so the path objective becomes a
   deterministic, piecewise-smooth function of the full 50x3 weight matrix.
-- Optimize the entire path at once using projected gradient ascent with horizon
-  1 anchored to the exact empirical one-year downside optimum.
+- Optimize the entire path at once using projected gradient ascent over horizons
+  1 through 50. Horizon 1 used to be anchored to the exact empirical one-year
+  downside optimum, but the current gradient-optimizer branch treats it as an
+  optimizable row.
 - Optionally apply convex smoothing between gradient-ascent iterations.
 - Coordinate polishing over nearby 2% grid portfolios still exists, but should
   be treated skeptically rather than as the default "final improvement" step.
@@ -251,6 +253,15 @@ Recent implementation changes:
   convex horizon smoother between gradient steps. It smooths the stock curve
   first, rescales bonds/T-bills proportionally, then smooths the bond curve and
   adjusts T-bills.
+- Random starts in `full_path_optimizer/optimize.py` now use random horizon-1
+  and horizon-50 endpoints with linear interpolation between them, rather than
+  drawing all 50 horizon rows independently. This makes random-start comparison
+  more comparable to the bisection/control-point setup.
+- Gradient ascent now projects each row's gradient into the simplex tangent
+  space before Adam moments, and projects the final Adam direction into the
+  tangent space again after Adam's coordinate-wise scaling. The normal
+  component should not influence moments, update directions, or coordinate
+  moves.
 
 Important caution:
 
@@ -289,14 +300,15 @@ A new research branch was added in `experimental_glide_path_optimizer/`.
 This branch combines ideas from the bisection optimizer and the full-path
 gradient optimizer:
 
-- Horizon 1 is fixed at the exact empirical one-year anchor.
+- Horizon 1 is initialized at the exact empirical one-year point, but is no
+  longer fixed during gradient ascent.
 - Horizon 50 is initialized by searching the simplex grid for the best endpoint
   under the weighted full-path objective with linearly interpolated
   intermediate horizons.
 - Endpoint search results are cached by relevant settings because the endpoint
   search can be a substantial fraction of runtime.
 - The path is represented by control points. Each bisection inserts linear
-  midpoint controls, then projected Adam ascent updates all controls except
+  midpoint controls, then projected Adam ascent updates all controls, including
   horizon 1.
 - Integer horizons are always evaluated by linear interpolation between control
   points. The gradient is computed on the full 50-horizon interpolated path,
@@ -305,9 +317,25 @@ gradient optimizer:
   because of that perturbation.
 - Optional `--smooth --smoothing-strength ...` mirrors the convex smoothing
   behavior in `full_path_optimizer`: after each gradient step, smooth the full
-  interpolated 50-horizon path, preserve the horizon-1 anchor and horizon-50
-  endpoint for that smoothing pass, then read the smoothed values back at the
-  current control horizons.
+  interpolated 50-horizon path, preserve the post-gradient horizon-1 and
+  horizon-50 endpoints for that smoothing pass, then read the smoothed values
+  back at the current control horizons.
+- `check_random_convergence.py` is a diagnostic variant that skips the empirical
+  horizon-1 initialization and endpoint search entirely. It draws random
+  horizon-1 and horizon-50 endpoints, interpolates between them, optionally runs
+  pre-bisection gradient steps while there are only two controls, and writes
+  endpoint, trace, trajectory, and final-path plots.
+- A debugging run showed why some random starts appeared not to benefit from
+  pre-bisection gradient steps: Adam's first update is essentially
+  `gradient / abs(gradient)`, so rows whose three raw gradient coordinates have
+  the same sign proposed equal-coordinate moves. Those moves are normal to the
+  simplex and project back to no change. The constrained gradient was not truly
+  near zero; subtracting the row mean exposed meaningful tangent directions and
+  made the starts improve immediately.
+- The fix was to remove each gradient row's mean before Adam sees it and also
+  remove each final Adam direction row's mean after coordinate-wise scaling.
+  The same principle now applies in `full_path_optimizer`,
+  `experimental_glide_path_optimizer`, and `experimental_retirement_path_optimizer`.
 
 Important current finding:
 
