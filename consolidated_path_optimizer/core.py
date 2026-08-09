@@ -242,6 +242,20 @@ def select_exact_horizon_one(dataset: str) -> np.ndarray:
     return ordered.iloc[0][WEIGHT_COLUMNS].to_numpy(dtype=float)
 
 
+def select_exact_horizon_one_from_matrix(asset_returns: np.ndarray) -> np.ndarray:
+    grid = generate_portfolio_weights()
+    weight_matrix = grid[WEIGHT_COLUMNS].to_numpy(dtype=float)
+    outcomes = asset_returns @ weight_matrix.T
+    scores = mean_of_worst_tail_fraction(outcomes, WORST_TAIL_FRACTION)
+    grid = grid.copy()
+    grid["score"] = scores
+    ordered = grid.sort_values(
+        ["score", "stock_weight", "bond_weight", "t_bill_weight"],
+        ascending=False,
+    )
+    return ordered.iloc[0][WEIGHT_COLUMNS].to_numpy(dtype=float)
+
+
 def weights_to_frame(weights: np.ndarray) -> pd.DataFrame:
     frame = pd.DataFrame(weights, columns=WEIGHT_COLUMNS)
     frame.insert(0, "horizon", np.arange(1, len(weights) + 1))

@@ -47,6 +47,8 @@ from simulate_returns import (
     generate_resampled_paths,
     load_returns,
 )
+from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
+from plots import plot_validation_traces
 
 OPTIMIZED_START_AGE = MIN_STARTING_AGE
 FIXED_ANCHOR_AGE = RETIREMENT_AGE
@@ -75,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
+    parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
     parser.add_argument("--bisections", type=int, default=DEFAULT_BISECTIONS)
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
@@ -723,6 +726,7 @@ def optimize_control_points(
     early_stop: bool,
     iteration: int,
     starting_step: int,
+    validation_path_returns: np.ndarray | None = None,
 ) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int]:
     control_ages = sorted(control_points)
     values = np.vstack([control_points[age] for age in control_ages])
@@ -788,6 +792,21 @@ def optimize_control_points(
             curvature_penalty=curvature_penalty,
             curvature_huber_delta=curvature_huber_delta,
         )
+        validation_regularized_objective = np.nan
+        if validation_path_returns is not None:
+            (
+                _validation_raw,
+                _validation_penalty,
+                validation_regularized_objective,
+            ) = regularized_terminal_objective(
+                path_returns=validation_path_returns,
+                accumulation_weights=jacobian @ values,
+                fixed_weights_by_age=fixed_weights_by_age,
+                contributions=contributions,
+                age_65_weight_ratio=age_65_weight_ratio,
+                curvature_penalty=curvature_penalty,
+                curvature_huber_delta=curvature_huber_delta,
+            )
         rows.append(
             {
                 "global_step": global_step,
@@ -805,6 +824,8 @@ def optimize_control_points(
                 "curvature_penalty_term": curvature_penalty * updated_curvature_penalty,
                 "regularized_objective": updated_regularized_objective,
                 "objective": updated_regularized_objective,
+                "validation_regularized_objective": validation_regularized_objective,
+                "validation_objective": validation_regularized_objective,
                 "control_point_count": len(control_ages),
                 "curvature_penalty_weight": curvature_penalty,
                 "curvature_huber_delta": curvature_huber_delta,
@@ -817,7 +838,8 @@ def optimize_control_points(
         if (
             early_stop
             and len(rows) >= 4
-            and rows[-4]["regularized_objective"] > updated_regularized_objective
+            and rows[-4][_early_stop_column(validation_path_returns)]
+            > rows[-1][_early_stop_column(validation_path_returns)]
         ):
             rows = rows[:-3]
             value_history = value_history[:-3]
@@ -826,6 +848,10 @@ def optimize_control_points(
             break
 
     return {age: values[index].copy() for index, age in enumerate(control_ages)}, rows, global_step
+
+
+def _early_stop_column(validation_path_returns: np.ndarray | None) -> str:
+    return "validation_regularized_objective" if validation_path_returns is not None else "regularized_objective"
 
 
 def path_frame(
@@ -1024,8 +1050,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: 
     metadata.to_csv(output_dir / "metadata.csv", index=False)
 
 
-def main() -> None:
-    args = parse_args()
+def validate_args(args: argparse.Namespace) -> None:
     if args.bisections < 0:
         raise ValueError("--bisections must be non-negative.")
     if args.gradient_steps < 0:
@@ -1043,8 +1068,17 @@ def main() -> None:
     if args.smoothing_bandwidth <= 0:
         raise ValueError("--smoothing-bandwidth must be positive.")
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    args.plot_dir.mkdir(parents=True, exist_ok=True)
+
+def run_single_optimization(
+    args: argparse.Namespace,
+    path_returns: np.ndarray,
+    output_dir: Path,
+    plot_dir: Path,
+    validation_path_returns: np.ndarray | None = None,
+    fold_name: str | None = None,
+) -> dict[str, float | str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
     retirement_path = args.retirement_path or default_retirement_path(args.dataset)
     reference_frame = load_retirement_weight_path(retirement_path)
     reference_weights = weights_by_age_from_frame(reference_frame)
@@ -1053,14 +1087,8 @@ def main() -> None:
     fixed_weights_by_age = {age: reference_weights[age] for age in range(FIXED_ANCHOR_AGE, MAX_STARTING_AGE + 1)}
     fixed_age_65 = fixed_weights_by_age[FIXED_ANCHOR_AGE]
 
-    path_returns, _asset_returns = make_shared_age_returns(
-        dataset=args.dataset,
-        num_simulations=args.num_simulations,
-        seed=args.seed,
-        block_length=args.block_length,
-    )
     scales = contribution_scales_from_reference_path(path_returns, contribution_reference_weights)
-    scales.to_csv(args.output_dir / "contribution_scales.csv", index=False)
+    scales.to_csv(output_dir / "contribution_scales.csv", index=False)
     contributions = contribution_by_start_age(scales)
 
     endpoint_cache_settings = {
@@ -1075,6 +1103,7 @@ def main() -> None:
         "contributions": [contributions[int(age)] for age in EVALUATED_START_AGES],
         "age_65_weight_ratio": args.age_65_weight_ratio,
         "endpoint_grid_step": args.endpoint_grid_step,
+        "fold_name": fold_name or "full",
     }
     age_20_endpoint, endpoint_summary = select_age_20_endpoint(
         path_returns=path_returns,
@@ -1088,7 +1117,7 @@ def main() -> None:
         cache_settings=endpoint_cache_settings,
         use_cache=not args.no_endpoint_cache,
     )
-    endpoint_summary.to_csv(args.output_dir / "endpoint_grid_search.csv", index=False)
+    endpoint_summary.to_csv(output_dir / "endpoint_grid_search.csv", index=False)
 
     control_points = {OPTIMIZED_START_AGE: age_20_endpoint, FIXED_ANCHOR_AGE: fixed_age_65}
     start_path = interpolate_control_points(control_points)
@@ -1149,6 +1178,7 @@ def main() -> None:
             early_stop=args.early_stop,
             iteration=iteration,
             starting_step=global_step,
+            validation_path_returns=validation_path_returns,
         )
         trace_rows.extend(rows)
         current_path = interpolate_control_points(control_points)
@@ -1191,19 +1221,51 @@ def main() -> None:
     control_history_frame = pd.concat(control_history, ignore_index=True)
     trace = pd.DataFrame(trace_rows)
 
-    final_path.to_csv(args.output_dir / "final_path.csv", index=False)
-    final_controls.to_csv(args.output_dir / "final_control_points.csv", index=False)
-    path_history_frame.to_csv(args.output_dir / "path_history.csv", index=False)
-    control_history_frame.to_csv(args.output_dir / "control_history.csv", index=False)
+    final_path.to_csv(output_dir / "final_path.csv", index=False)
+    final_controls.to_csv(output_dir / "final_control_points.csv", index=False)
+    path_history_frame.to_csv(output_dir / "path_history.csv", index=False)
+    control_history_frame.to_csv(output_dir / "control_history.csv", index=False)
     if not trace.empty:
-        trace.to_csv(args.output_dir / "objective_trace.csv", index=False)
-    write_metadata(args, args.output_dir, retirement_path)
-    plot_contribution_scales(scales, args.plot_dir / "contribution_start_constants_by_age.pdf")
-    plot_iteration_paths(path_history_frame, args.plot_dir / "path_iterations.pdf")
+        trace.to_csv(output_dir / "objective_trace.csv", index=False)
+    write_metadata(args, output_dir, retirement_path)
+    plot_contribution_scales(scales, plot_dir / "contribution_start_constants_by_age.pdf")
+    plot_iteration_paths(path_history_frame, plot_dir / "path_iterations.pdf")
     if not trace.empty:
-        plot_objective_trace(trace, args.plot_dir / "objective_trace.pdf")
-    print(f"wrote {args.output_dir / 'final_path.csv'}")
-    print(f"wrote {args.plot_dir / 'path_iterations.pdf'}")
+        plot_objective_trace(trace, plot_dir / "objective_trace.pdf")
+        plot_validation_traces(output_dir / "objective_trace.csv", plot_dir / "validation_objective_trace.pdf")
+    print(f"wrote {output_dir / 'final_path.csv'}")
+    print(f"wrote {plot_dir / 'path_iterations.pdf'}")
+    final_weights = final_path[final_path["starting_age"].between(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE)][WEIGHT_COLUMNS].to_numpy(dtype=float)
+    training_performance = regularized_terminal_objective(
+        path_returns=path_returns,
+        accumulation_weights=final_weights,
+        fixed_weights_by_age=fixed_weights_by_age,
+        contributions=contributions,
+        age_65_weight_ratio=args.age_65_weight_ratio,
+        curvature_penalty=args.curvature_penalty,
+        curvature_huber_delta=args.curvature_huber_delta,
+    )[2]
+    validation_performance = (
+        regularized_terminal_objective(
+            path_returns=validation_path_returns,
+            accumulation_weights=final_weights,
+            fixed_weights_by_age=fixed_weights_by_age,
+            contributions=contributions,
+            age_65_weight_ratio=args.age_65_weight_ratio,
+            curvature_penalty=args.curvature_penalty,
+            curvature_huber_delta=args.curvature_huber_delta,
+        )[2]
+        if validation_path_returns is not None
+        else np.nan
+    )
+    return {
+        "fold": fold_name or "full",
+        "training_performance": float(training_performance),
+        "validation_performance": float(validation_performance),
+    }
+
+
+def run_external_comparison(args: argparse.Namespace) -> None:
     if not args.skip_external_comparison:
         command = [
             sys.executable,
@@ -1223,6 +1285,64 @@ def main() -> None:
         ]
         print("running external glide-path comparison", flush=True)
         subprocess.run(command, check=True)
+
+
+def run_cross_validation(args: argparse.Namespace) -> None:
+    folds = make_cv_folds(
+        dataset=args.dataset,
+        num_simulations=args.num_simulations,
+        horizon=MAX_STARTING_AGE - MIN_STARTING_AGE + 1,
+        seed=args.seed,
+        block_length=args.block_length,
+        run_mode=args.run_mode,
+        stream="retirement_path",
+    )
+    rows = []
+    for fold in folds:
+        print(f"\n{fold.name}: running {args.run_mode}", flush=True)
+        rows.append(
+            run_single_optimization(
+                args=args,
+                path_returns=fold.train_path_returns,
+                output_dir=args.output_dir / fold.name,
+                plot_dir=args.plot_dir / fold.name,
+                validation_path_returns=fold.validation_path_returns,
+                fold_name=fold.name,
+            )
+        )
+    summary = pd.DataFrame(rows)
+    summary.to_csv(args.output_dir / "cross_validation_summary.csv", index=False)
+    print(
+        "\nCV mean training performance: "
+        f"{summary['training_performance'].mean():.6f}"
+    )
+    print(
+        "CV mean validation performance: "
+        f"{summary['validation_performance'].mean():.6f}"
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    validate_args(args)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.plot_dir.mkdir(parents=True, exist_ok=True)
+    if args.run_mode == RUN_MODE_FULL:
+        path_returns, _asset_returns = make_shared_age_returns(
+            dataset=args.dataset,
+            num_simulations=args.num_simulations,
+            seed=args.seed,
+            block_length=args.block_length,
+        )
+        run_single_optimization(
+            args=args,
+            path_returns=path_returns,
+            output_dir=args.output_dir,
+            plot_dir=args.plot_dir,
+        )
+        run_external_comparison(args)
+    else:
+        run_cross_validation(args)
 
 
 if __name__ == "__main__":

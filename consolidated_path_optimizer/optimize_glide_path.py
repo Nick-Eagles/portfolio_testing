@@ -42,17 +42,25 @@ from core import (
     exponential_horizon_weights,
     load_asset_return_matrix,
     make_shared_path_returns,
+    load_asset_return_matrix,
+    make_shared_path_returns,
     objective_and_gradient,
     path_objective,
     project_gradient_to_simplex_tangent,
     project_path_to_simplex,
-    select_exact_horizon_one,
+    select_exact_horizon_one_from_matrix,
     weights_to_frame,
 )
 from common import huber_curvature_penalty_and_gradient, smooth_path_between_gradient_steps
+from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
 from portfolio_helpers import generate_portfolio_weights
 from simulate_glide_path import DEFAULT_SEED
-from plots import plot_end_paths, plot_gradient_snapshots, plot_optimization_traces
+from plots import (
+    plot_end_paths,
+    plot_gradient_snapshots,
+    plot_optimization_traces,
+    plot_validation_traces,
+)
 
 DEFAULT_BISECTIONS = 5
 DEFAULT_GRADIENT_STEPS = 10
@@ -74,6 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
+    parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
     parser.add_argument("--bisections", type=int, default=DEFAULT_BISECTIONS)
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
@@ -540,6 +549,8 @@ def optimize_control_points(
     early_stop: bool,
     iteration: int,
     starting_step: int,
+    validation_path_returns: np.ndarray | None = None,
+    validation_asset_returns: np.ndarray | None = None,
 ) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int]:
     if steps < 0:
         raise ValueError("--gradient-steps must be non-negative.")
@@ -609,6 +620,26 @@ def optimize_control_points(
             asset_returns,
             horizon_50_weight_ratio=horizon_50_weight_ratio,
         )
+        validation_regularized_objective = np.nan
+        validation_canonical_objective = np.nan
+        if validation_path_returns is not None:
+            (
+                _validation_raw,
+                _validation_penalty,
+                validation_regularized_objective,
+            ) = regularized_objective_only(
+                validation_path_returns,
+                updated_full_path,
+                horizon_50_weight_ratio=horizon_50_weight_ratio,
+                curvature_penalty=curvature_penalty,
+                curvature_huber_delta=curvature_huber_delta,
+            )
+            validation_canonical_objective = path_objective(
+                validation_path_returns,
+                updated_full_path,
+                asset_returns if validation_asset_returns is None else validation_asset_returns,
+                horizon_50_weight_ratio=horizon_50_weight_ratio,
+            )
         (
             updated_raw_objective,
             updated_curvature_penalty,
@@ -638,6 +669,9 @@ def optimize_control_points(
                 "regularized_objective": updated_regularized_objective,
                 "canonical_objective": updated_canonical_objective,
                 "objective": updated_regularized_objective,
+                "validation_regularized_objective": validation_regularized_objective,
+                "validation_canonical_objective": validation_canonical_objective,
+                "validation_objective": validation_regularized_objective,
                 "control_point_count": len(control_horizons),
                 "curvature_penalty_weight": curvature_penalty,
                 "curvature_huber_delta": curvature_huber_delta,
@@ -651,7 +685,8 @@ def optimize_control_points(
         if (
             early_stop
             and len(rows) >= 4
-            and rows[-4]["regularized_objective"] > updated_regularized_objective
+            and rows[-4][_early_stop_column(validation_path_returns)]
+            > rows[-1][_early_stop_column(validation_path_returns)]
         ):
             rows = rows[:-3]
             value_history = value_history[:-3]
@@ -663,6 +698,10 @@ def optimize_control_points(
         horizon: values[index].copy() for index, horizon in enumerate(control_horizons)
     }
     return updated, rows, global_step
+
+
+def _early_stop_column(validation_path_returns: np.ndarray | None) -> str:
+    return "validation_regularized_objective" if validation_path_returns is not None else "regularized_objective"
 
 
 def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
@@ -819,8 +858,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
     metadata.to_csv(output_dir / "metadata.csv", index=False)
 
 
-def main() -> None:
-    args = parse_args()
+def validate_args(args: argparse.Namespace) -> None:
     if args.bisections < 0:
         raise ValueError("--bisections must be non-negative.")
     if args.random_starts < 0:
@@ -838,18 +876,20 @@ def main() -> None:
     if args.block_length < 1:
         raise ValueError("--block-length must be at least 1.")
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    args.plot_dir.mkdir(parents=True, exist_ok=True)
 
-    asset_returns = load_asset_return_matrix(args.dataset)
-    path_returns = make_shared_path_returns(
-        dataset=args.dataset,
-        num_simulations=args.num_simulations,
-        seed=args.seed,
-        max_horizon=MAX_HORIZON,
-        block_length=args.block_length,
-    )
-    horizon_one = select_exact_horizon_one(args.dataset)
+def run_single_optimization(
+    args: argparse.Namespace,
+    path_returns: np.ndarray,
+    asset_returns: np.ndarray,
+    output_dir: Path,
+    plot_dir: Path,
+    validation_path_returns: np.ndarray | None = None,
+    validation_asset_returns: np.ndarray | None = None,
+    fold_name: str | None = None,
+) -> dict[str, float | str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    horizon_one = select_exact_horizon_one_from_matrix(asset_returns)
     print(f"horizon-1 initialization: {np.round(horizon_one, 4)}", flush=True)
 
     endpoint_cache_settings = {
@@ -863,6 +903,7 @@ def main() -> None:
         "horizon_50_weight_ratio": args.horizon_50_weight_ratio,
         "horizon_one": horizon_one,
         "tail_fraction": 0.04,
+        "fold_name": fold_name or "full",
     }
     horizon_50, endpoint_summary = select_horizon_50_endpoint(
         path_returns=path_returns,
@@ -875,12 +916,12 @@ def main() -> None:
         cache_settings=endpoint_cache_settings,
         use_cache=not args.no_endpoint_cache,
     )
-    endpoint_summary.to_csv(args.output_dir / "endpoint_grid_search.csv", index=False)
+    endpoint_summary.to_csv(output_dir / "endpoint_grid_search.csv", index=False)
 
     starts = build_start_paths(horizon_one, horizon_50, args.random_starts, args.start_seed)
-    start_paths_dir = args.output_dir / "start_paths"
-    end_paths_dir = args.output_dir / "end_paths"
-    trajectories_dir = args.output_dir / "path_trajectories"
+    start_paths_dir = output_dir / "start_paths"
+    end_paths_dir = output_dir / "end_paths"
+    trajectories_dir = output_dir / "path_trajectories"
     for directory in (start_paths_dir, end_paths_dir, trajectories_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -957,6 +998,8 @@ def main() -> None:
                 early_stop=args.early_stop,
                 iteration=iteration,
                 starting_step=global_step,
+                validation_path_returns=validation_path_returns,
+                validation_asset_returns=validation_asset_returns,
             )
             trace_rows.extend(rows)
             current_path = interpolate_control_points(control_points)
@@ -998,6 +1041,16 @@ def main() -> None:
         final_controls = control_history[-1].copy()
         final_canonical = float(final_path["canonical_objective"].iloc[0])
         final_regularized = float(final_path["regularized_objective"].iloc[0])
+        validation_canonical = (
+            path_objective(
+                validation_path_returns,
+                final_path[WEIGHT_COLUMNS].to_numpy(dtype=float),
+                asset_returns if validation_asset_returns is None else validation_asset_returns,
+                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            )
+            if validation_path_returns is not None
+            else np.nan
+        )
 
         final_path[["horizon", *WEIGHT_COLUMNS]].to_csv(
             end_paths_dir / f"{start_name}.csv",
@@ -1014,13 +1067,19 @@ def main() -> None:
                 "initial_canonical_objective": start_canonical_objective,
                 "final_regularized_objective": final_regularized,
                 "final_canonical_objective": final_canonical,
+                "validation_canonical_objective": validation_canonical,
                 "final_control_point_count": len(final_controls),
                 "trace_states": len(trace),
             }
         )
         print(
             f"{start_name}: final regularized={final_regularized:.6f}, "
-            f"canonical={final_canonical:.6f}",
+            f"canonical={final_canonical:.6f}"
+            + (
+                f", validation={validation_canonical:.6f}"
+                if validation_path_returns is not None
+                else ""
+            ),
             flush=True,
         )
         if final_canonical > best_score:
@@ -1034,47 +1093,128 @@ def main() -> None:
         raise RuntimeError("No optimization starts were run.")
 
     summary = pd.DataFrame(summaries).sort_values("final_canonical_objective", ascending=False)
-    summary.to_csv(args.output_dir / "optimization_start_summary.csv", index=False)
+    summary.to_csv(output_dir / "optimization_start_summary.csv", index=False)
     final_path = best_path_history_frame[best_path_history_frame["iteration"] == best_path_history_frame["iteration"].max()]
     final_controls = best_control_history_frame[best_control_history_frame["iteration"] == best_control_history_frame["iteration"].max()]
-    final_path.to_csv(args.output_dir / "final_path.csv", index=False)
-    final_controls.to_csv(args.output_dir / "final_control_points.csv", index=False)
-    best_path_history_frame.to_csv(args.output_dir / "path_history.csv", index=False)
-    best_control_history_frame.to_csv(args.output_dir / "control_history.csv", index=False)
+    final_path.to_csv(output_dir / "final_path.csv", index=False)
+    final_controls.to_csv(output_dir / "final_control_points.csv", index=False)
+    best_path_history_frame.to_csv(output_dir / "path_history.csv", index=False)
+    best_control_history_frame.to_csv(output_dir / "control_history.csv", index=False)
     if all_traces:
         pd.concat(all_traces, ignore_index=True).to_csv(
-            args.output_dir / "optimization_traces.csv",
+            output_dir / "optimization_traces.csv",
             index=False,
         )
     if best_trace is not None and not best_trace.empty:
-        best_trace.to_csv(args.output_dir / "objective_trace.csv", index=False)
+        best_trace.to_csv(output_dir / "objective_trace.csv", index=False)
 
-    write_metadata(args, args.output_dir)
+    write_metadata(args, output_dir)
     plot_end_paths(
         start_paths_dir,
-        args.plot_dir / "start_paths.pdf",
+        plot_dir / "start_paths.pdf",
         title="Initial paths before optimization",
     )
     plot_end_paths(
         end_paths_dir,
-        args.plot_dir / "end_paths.pdf",
+        plot_dir / "end_paths.pdf",
         title="End paths after optimization",
     )
-    traces_csv = args.output_dir / "optimization_traces.csv"
+    traces_csv = output_dir / "optimization_traces.csv"
     if traces_csv.exists():
-        plot_optimization_traces(traces_csv, args.plot_dir / "optimization_traces.pdf")
+        plot_optimization_traces(traces_csv, plot_dir / "optimization_traces.pdf")
+        plot_validation_traces(traces_csv, plot_dir / "validation_optimization_traces.pdf")
     good_trajectory = trajectories_dir / "good_start.csv"
     if good_trajectory.exists():
-        plot_gradient_snapshots(good_trajectory, args.plot_dir / "good_start_path_snapshots.pdf")
-    plot_iteration_paths(best_path_history_frame, args.plot_dir / "path_iterations.pdf")
+        plot_gradient_snapshots(good_trajectory, plot_dir / "good_start_path_snapshots.pdf")
+    plot_iteration_paths(best_path_history_frame, plot_dir / "path_iterations.pdf")
     if best_trace is not None and not best_trace.empty:
-        plot_objective_trace(best_trace, args.plot_dir / "objective_trace.pdf")
+        plot_objective_trace(best_trace, plot_dir / "objective_trace.pdf")
 
     print(f"best start: {best_name}, canonical objective {best_score:.6f}")
-    print(f"wrote {args.output_dir / 'final_path.csv'}")
-    print(f"wrote {args.plot_dir / 'path_iterations.pdf'}")
+    print(f"wrote {output_dir / 'final_path.csv'}")
+    print(f"wrote {plot_dir / 'path_iterations.pdf'}")
     if best_trace is not None and not best_trace.empty:
-        print(f"wrote {args.plot_dir / 'objective_trace.pdf'}")
+        print(f"wrote {plot_dir / 'objective_trace.pdf'}")
+    best_weights = final_path[WEIGHT_COLUMNS].to_numpy(dtype=float)
+    return {
+        "fold": fold_name or "full",
+        "best_start": best_name,
+        "training_performance": float(best_score),
+        "validation_performance": (
+            float(
+                path_objective(
+                    validation_path_returns,
+                    best_weights,
+                    asset_returns if validation_asset_returns is None else validation_asset_returns,
+                    horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+                )
+            )
+            if validation_path_returns is not None
+            else np.nan
+        ),
+    }
+
+
+def run_cross_validation(args: argparse.Namespace) -> None:
+    folds = make_cv_folds(
+        dataset=args.dataset,
+        num_simulations=args.num_simulations,
+        horizon=MAX_HORIZON,
+        seed=args.seed,
+        block_length=args.block_length,
+        run_mode=args.run_mode,
+        stream="glide_path",
+    )
+    rows = []
+    for fold in folds:
+        print(f"\n{fold.name}: running {args.run_mode}", flush=True)
+        rows.append(
+            run_single_optimization(
+                args=args,
+                path_returns=fold.train_path_returns,
+                asset_returns=fold.train_asset_returns,
+                output_dir=args.output_dir / fold.name,
+                plot_dir=args.plot_dir / fold.name,
+                validation_path_returns=fold.validation_path_returns,
+                validation_asset_returns=fold.validation_asset_returns,
+                fold_name=fold.name,
+            )
+        )
+    summary = pd.DataFrame(rows)
+    summary.to_csv(args.output_dir / "cross_validation_summary.csv", index=False)
+    print(
+        "\nCV mean training performance: "
+        f"{summary['training_performance'].mean():.6f}"
+    )
+    print(
+        "CV mean validation performance: "
+        f"{summary['validation_performance'].mean():.6f}"
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    validate_args(args)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.plot_dir.mkdir(parents=True, exist_ok=True)
+    if args.run_mode == RUN_MODE_FULL:
+        asset_returns = load_asset_return_matrix(args.dataset)
+        path_returns = make_shared_path_returns(
+            dataset=args.dataset,
+            num_simulations=args.num_simulations,
+            seed=args.seed,
+            max_horizon=MAX_HORIZON,
+            block_length=args.block_length,
+        )
+        run_single_optimization(
+            args=args,
+            path_returns=path_returns,
+            asset_returns=asset_returns,
+            output_dir=args.output_dir,
+            plot_dir=args.plot_dir,
+        )
+    else:
+        run_cross_validation(args)
 
 
 if __name__ == "__main__":

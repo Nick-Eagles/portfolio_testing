@@ -27,10 +27,11 @@ from core import (
     path_objective,
     project_gradient_to_simplex_tangent,
     project_path_to_simplex,
-    select_exact_horizon_one,
+    select_exact_horizon_one_from_matrix,
     weights_to_frame,
 )
 from common import huber_curvature_penalty_and_gradient, smooth_path_between_gradient_steps
+from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
 from optimize_glide_path import (
     ENDPOINT_CACHE_VERSION,
     DEFAULT_ENDPOINT_CHUNK_SIZE,
@@ -38,7 +39,12 @@ from optimize_glide_path import (
     build_start_paths,
     select_horizon_50_endpoint,
 )
-from plots import plot_end_paths, plot_gradient_snapshots, plot_optimization_traces
+from plots import (
+    plot_end_paths,
+    plot_gradient_snapshots,
+    plot_optimization_traces,
+    plot_validation_traces,
+)
 from simulate_glide_path import DEFAULT_SEED
 
 DEFAULT_CURVATURE_PENALTY = 0.001
@@ -51,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-simulations", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
+    parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
     parser.add_argument("--iterations", type=int, default=15)
     parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument(
@@ -194,6 +201,8 @@ def evaluated_state_row(
     smooth: bool,
     smoothing_strength: float,
     smoothing_bandwidth: float,
+    validation_path_returns: np.ndarray | None = None,
+    validation_asset_returns: np.ndarray | None = None,
 ) -> dict[str, float | int | bool]:
     raw_objective, penalty_value, regularized_objective = regularized_objective_only(
         path_returns,
@@ -208,7 +217,7 @@ def evaluated_state_row(
         asset_returns,
         horizon_50_weight_ratio=horizon_50_weight_ratio,
     )
-    return {
+    row = {
         "iteration": iteration,
         "raw_objective": raw_objective,
         "curvature_penalty_value": penalty_value,
@@ -220,6 +229,33 @@ def evaluated_state_row(
         "smoothing_strength": smoothing_strength if smooth else 0.0,
         "smoothing_bandwidth": smoothing_bandwidth if smooth else 0.0,
     }
+    if validation_path_returns is not None:
+        validation_asset = (
+            asset_returns if validation_asset_returns is None else validation_asset_returns
+        )
+        validation_raw, validation_penalty, validation_regularized = regularized_objective_only(
+            validation_path_returns,
+            weights,
+            horizon_50_weight_ratio=horizon_50_weight_ratio,
+            curvature_penalty=curvature_penalty,
+            curvature_huber_delta=curvature_huber_delta,
+        )
+        row.update(
+            {
+                "validation_raw_objective": validation_raw,
+                "validation_curvature_penalty_value": validation_penalty,
+                "validation_curvature_penalty_term": curvature_penalty * validation_penalty,
+                "validation_regularized_objective": validation_regularized,
+                "validation_canonical_objective": path_objective(
+                    validation_path_returns,
+                    weights,
+                    validation_asset,
+                    horizon_50_weight_ratio=horizon_50_weight_ratio,
+                ),
+                "validation_objective": validation_regularized,
+            }
+        )
+    return row
 
 
 def optimize_from_start(
@@ -235,6 +271,8 @@ def optimize_from_start(
     smoothing_strength: float,
     smoothing_bandwidth: float,
     early_stop: bool,
+    validation_path_returns: np.ndarray | None = None,
+    validation_asset_returns: np.ndarray | None = None,
 ) -> tuple[np.ndarray, pd.DataFrame, list[pd.DataFrame]]:
     """Projected Adam ascent over all horizon rows."""
     weights = initial_weights.copy()
@@ -255,6 +293,8 @@ def optimize_from_start(
             smooth=smooth,
             smoothing_strength=smoothing_strength,
             smoothing_bandwidth=smoothing_bandwidth,
+            validation_path_returns=validation_path_returns,
+            validation_asset_returns=validation_asset_returns,
         )
     ]
     weight_history = [weights.copy()]
@@ -301,6 +341,8 @@ def optimize_from_start(
                 smooth=smooth,
                 smoothing_strength=smoothing_strength,
                 smoothing_bandwidth=smoothing_bandwidth,
+                validation_path_returns=validation_path_returns,
+                validation_asset_returns=validation_asset_returns,
             )
         )
         weight_history.append(weights.copy())
@@ -309,7 +351,8 @@ def optimize_from_start(
         if (
             early_stop
             and len(trace_rows) >= 4
-            and trace_rows[-4]["regularized_objective"] > trace_rows[-1]["regularized_objective"]
+            and trace_rows[-4][_early_stop_column(validation_path_returns)]
+            > trace_rows[-1][_early_stop_column(validation_path_returns)]
         ):
             trace_rows = trace_rows[:-3]
             weight_history = weight_history[:-3]
@@ -317,11 +360,14 @@ def optimize_from_start(
             weights = weight_history[-1].copy()
             break
 
-    best_index = int(
-        np.argmax([row["regularized_objective"] for row in trace_rows])
-    )
+    best_column = _early_stop_column(validation_path_returns)
+    best_index = int(np.argmax([row[best_column] for row in trace_rows]))
     best_weights = weight_history[best_index].copy()
     return best_weights, pd.DataFrame(trace_rows), trajectory
+
+
+def _early_stop_column(validation_path_returns: np.ndarray | None) -> str:
+    return "validation_regularized_objective" if validation_path_returns is not None else "regularized_objective"
 
 
 def average_random_paths(
@@ -337,8 +383,7 @@ def average_random_paths(
     return averaged
 
 
-def main() -> None:
-    args = parse_args()
+def validate_args(args: argparse.Namespace) -> None:
     if args.curvature_penalty < 0:
         raise ValueError("--curvature-penalty must be non-negative.")
     if args.curvature_huber_delta <= 0:
@@ -353,17 +398,22 @@ def main() -> None:
         raise ValueError("--block-length must be at least 1.")
     if args.random_starts < 0:
         raise ValueError("--random-starts must be non-negative.")
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    args.plot_dir.mkdir(parents=True, exist_ok=True)
 
-    asset_returns = load_asset_return_matrix(args.dataset)
-    path_returns = make_shared_path_returns(
-        args.dataset,
-        args.num_simulations,
-        seed=args.seed,
-        block_length=args.block_length,
-    )
-    horizon_one = select_exact_horizon_one(args.dataset)
+
+def run_single_optimization(
+    args: argparse.Namespace,
+    path_returns: np.ndarray,
+    asset_returns: np.ndarray,
+    output_dir: Path,
+    plot_dir: Path,
+    validation_path_returns: np.ndarray | None = None,
+    validation_asset_returns: np.ndarray | None = None,
+    fold_name: str | None = None,
+) -> dict[str, float | str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    horizon_one = select_exact_horizon_one_from_matrix(asset_returns)
     print(f"empirical horizon-1 reference: {np.round(horizon_one, 4)}")
     endpoint_cache_settings = {
         "version": ENDPOINT_CACHE_VERSION,
@@ -376,6 +426,7 @@ def main() -> None:
         "horizon_50_weight_ratio": args.horizon_50_weight_ratio,
         "horizon_one": horizon_one,
         "tail_fraction": 0.04,
+        "fold_name": fold_name or "full",
     }
     horizon_50, endpoint_summary = select_horizon_50_endpoint(
         path_returns=path_returns,
@@ -388,16 +439,16 @@ def main() -> None:
         cache_settings=endpoint_cache_settings,
         use_cache=not args.no_endpoint_cache,
     )
-    endpoint_summary.to_csv(args.output_dir / "endpoint_grid_search.csv", index=False)
+    endpoint_summary.to_csv(output_dir / "endpoint_grid_search.csv", index=False)
     print(f"empirical horizon-50 reference: {np.round(horizon_50, 4)}")
 
     starts = build_start_paths(horizon_one, horizon_50, args.random_starts, args.start_seed)
 
-    start_paths_dir = args.output_dir / "start_paths"
+    start_paths_dir = output_dir / "start_paths"
     start_paths_dir.mkdir(parents=True, exist_ok=True)
-    end_paths_dir = args.output_dir / "end_paths"
+    end_paths_dir = output_dir / "end_paths"
     end_paths_dir.mkdir(parents=True, exist_ok=True)
-    trajectories_dir = args.output_dir / "gradient_trajectories"
+    trajectories_dir = output_dir / "gradient_trajectories"
     trajectories_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
@@ -420,6 +471,8 @@ def main() -> None:
             smoothing_strength=args.smoothing_strength,
             smoothing_bandwidth=args.smoothing_bandwidth,
             early_stop=args.early_stop,
+            validation_path_returns=validation_path_returns,
+            validation_asset_returns=validation_asset_returns,
         )
         final_row = trace.iloc[-1]
         best_row = trace.sort_values("regularized_objective", ascending=False).iloc[0]
@@ -428,6 +481,16 @@ def main() -> None:
             weights,
             asset_returns,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
+        validation_canonical = (
+            path_objective(
+                validation_path_returns,
+                weights,
+                asset_returns if validation_asset_returns is None else validation_asset_returns,
+                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            )
+            if validation_path_returns is not None
+            else np.nan
         )
         elapsed = time.time() - began
         results.append(
@@ -440,6 +503,7 @@ def main() -> None:
                 "best_raw_objective": best_row["raw_objective"],
                 "best_regularized_objective": best_row["regularized_objective"],
                 "canonical_objective": canonical,
+                "validation_canonical_objective": validation_canonical,
                 "curvature_penalty_value": final_row["curvature_penalty_value"],
                 "curvature_penalty_term": final_row["curvature_penalty_term"],
                 "trace_states": len(trace),
@@ -458,7 +522,13 @@ def main() -> None:
             f"{best_row['raw_objective']:.6f}, "
             f"regularized {trace.iloc[0]['regularized_objective']:.6f} -> "
             f"{best_row['regularized_objective']:.6f}, "
-            f"canonical {canonical:.6f} ({elapsed:.0f}s)"
+            f"canonical {canonical:.6f}"
+            + (
+                f", validation {validation_canonical:.6f}"
+                if validation_path_returns is not None
+                else ""
+            )
+            + f" ({elapsed:.0f}s)"
         )
         if canonical > best_score:
             best_name, best_weights, best_score = name, weights, canonical
@@ -511,18 +581,20 @@ def main() -> None:
         )
 
     summary = pd.DataFrame(results).sort_values("canonical_objective", ascending=False)
-    summary.to_csv(args.output_dir / "optimization_start_summary.csv", index=False)
-    traces_csv = args.output_dir / "optimization_traces.csv"
+    summary.to_csv(output_dir / "optimization_start_summary.csv", index=False)
+    traces_csv = output_dir / "optimization_traces.csv"
     pd.concat(traces, ignore_index=True).to_csv(traces_csv, index=False)
 
     best_frame = weights_to_frame(best_weights)
-    gradient_path_csv = args.output_dir / "gradient_path.csv"
+    gradient_path_csv = output_dir / "gradient_path.csv"
     best_frame.to_csv(gradient_path_csv, index=False)
-    trace_plot = args.plot_dir / "optimization_traces.pdf"
-    start_paths_plot = args.plot_dir / "start_paths.pdf"
-    end_paths_plot = args.plot_dir / "end_paths.pdf"
-    snapshots_plot = args.plot_dir / "good_start_path_snapshots.pdf"
+    trace_plot = plot_dir / "optimization_traces.pdf"
+    validation_trace_plot = plot_dir / "validation_optimization_traces.pdf"
+    start_paths_plot = plot_dir / "start_paths.pdf"
+    end_paths_plot = plot_dir / "end_paths.pdf"
+    snapshots_plot = plot_dir / "good_start_path_snapshots.pdf"
     plot_optimization_traces(traces_csv, trace_plot)
+    plot_validation_traces(traces_csv, validation_trace_plot)
     plot_end_paths(start_paths_dir, start_paths_plot, title="Initial paths before optimization")
     plot_end_paths(end_paths_dir, end_paths_plot, title="End paths after optimization")
     plot_gradient_snapshots(trajectories_dir / "good_start.csv", snapshots_plot)
@@ -531,6 +603,84 @@ def main() -> None:
     print(f"wrote {trace_plot}")
     print(f"wrote {end_paths_plot}")
     print(f"wrote {snapshots_plot}")
+    return {
+        "fold": fold_name or "full",
+        "best_start": str(best_name),
+        "training_performance": float(best_score),
+        "validation_performance": (
+            float(
+                path_objective(
+                    validation_path_returns,
+                    best_weights,
+                    asset_returns if validation_asset_returns is None else validation_asset_returns,
+                    horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+                )
+            )
+            if validation_path_returns is not None
+            else np.nan
+        ),
+    }
+
+
+def run_cross_validation(args: argparse.Namespace) -> None:
+    folds = make_cv_folds(
+        dataset=args.dataset,
+        num_simulations=args.num_simulations,
+        horizon=MAX_HORIZON,
+        seed=args.seed,
+        block_length=args.block_length,
+        run_mode=args.run_mode,
+        stream="full_path",
+    )
+    rows = []
+    for fold in folds:
+        print(f"\n{fold.name}: running {args.run_mode}", flush=True)
+        rows.append(
+            run_single_optimization(
+                args=args,
+                path_returns=fold.train_path_returns,
+                asset_returns=fold.train_asset_returns,
+                output_dir=args.output_dir / fold.name,
+                plot_dir=args.plot_dir / fold.name,
+                validation_path_returns=fold.validation_path_returns,
+                validation_asset_returns=fold.validation_asset_returns,
+                fold_name=fold.name,
+            )
+        )
+    summary = pd.DataFrame(rows)
+    summary.to_csv(args.output_dir / "cross_validation_summary.csv", index=False)
+    print(
+        "\nCV mean training performance: "
+        f"{summary['training_performance'].mean():.6f}"
+    )
+    print(
+        "CV mean validation performance: "
+        f"{summary['validation_performance'].mean():.6f}"
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    validate_args(args)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.plot_dir.mkdir(parents=True, exist_ok=True)
+    if args.run_mode == RUN_MODE_FULL:
+        asset_returns = load_asset_return_matrix(args.dataset)
+        path_returns = make_shared_path_returns(
+            args.dataset,
+            args.num_simulations,
+            seed=args.seed,
+            block_length=args.block_length,
+        )
+        run_single_optimization(
+            args=args,
+            path_returns=path_returns,
+            asset_returns=asset_returns,
+            output_dir=args.output_dir,
+            plot_dir=args.plot_dir,
+        )
+    else:
+        run_cross_validation(args)
 
 
 if __name__ == "__main__":

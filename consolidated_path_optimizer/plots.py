@@ -215,6 +215,34 @@ def plot_optimization_traces(traces_csv: Path, output_pdf: Path) -> None:
     plt.close(fig)
 
 
+def plot_validation_traces(traces_csv: Path, output_pdf: Path) -> None:
+    if not traces_csv.exists():
+        return
+    traces = pd.read_csv(traces_csv)
+    if "validation_objective" not in traces.columns:
+        return
+    traces = traces.dropna(subset=["validation_objective"])
+    if traces.empty:
+        return
+    fig, ax = plt.subplots(figsize=(9, 5.5), constrained_layout=True)
+    x_column = "global_step" if "global_step" in traces.columns else "iteration"
+    groups = traces.groupby("start") if "start" in traces.columns else [("validation", traces)]
+    for name, group in groups:
+        ax.plot(
+            group[x_column],
+            group["validation_objective"],
+            linewidth=1.4,
+            label=name,
+        )
+    ax.set_xlabel("Gradient step" if x_column == "global_step" else "Iteration")
+    ax.set_ylabel("Validation objective")
+    ax.set_title("Validation objective traces by start")
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, fontsize=8)
+    fig.savefig(output_pdf)
+    plt.close(fig)
+
+
 def plot_end_paths(
     start_paths_dir: Path,
     output_pdf: Path,
