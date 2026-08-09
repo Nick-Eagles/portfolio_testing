@@ -77,133 +77,76 @@ discarded.
 
 ## Project Arms
 
-### Fixed-Portfolio Arm
+### Primary Product: Consolidated Path Optimizer
 
-This is the older, more established baseline. It evaluates fixed portfolios
-over full horizons, then smooths the resulting portfolio/horizon surfaces before
-selecting an optimal path.
+`consolidated_path_optimizer/` is the modern and primary product of this
+repository. Treat the older first-level scripts and earlier optimizer
+directories as historical references unless the user explicitly asks about
+them. Nothing in the first directory level is the active workflow now.
 
-Primary scripts:
+The consolidated directory contains three optimization algorithms:
 
-- `simulate_returns.py`
-- `build_smoothed_stats.py`
-- `plot_smoothed_q02_results.py`
-- `plot_smoothed_optimal_path.py`
-- `convex_smoothing.py`
+- `optimize_full_path.py`: direct full-path projected Adam over all horizon
+  rows. This intentionally remains an alternative to bisection/control-point
+  logic.
+- `optimize_glide_path.py`: bisection/control-point optimizer for the 1-50 year
+  glide path, using the analytic full-path gradient.
+- `optimize_retirement_path.py`: retirement accumulation optimizer for ages
+  20-65, retaining the already-computed post-retirement block.
 
-Important context:
+The non-retirement algorithms run a strong `good_start` path plus configurable
+random endpoint-interpolated starts. The `good_start` uses the empirical
+horizon-1 optimum and a cached horizon-50 endpoint search.
 
-- This arm was originally built around lower-tail quantiles, especially `q02`.
-- Smoothing across horizons and the simplex is important for interpretability.
-- Horizon 1 needs exact empirical handling because the sample is small.
+Each optimizer supports three run modes:
 
-### Glide-Path Arm
+- `--run-mode full`: optimize on the full 1927-onward dataset. This is the mode
+  intended to produce the final repository result once hyperparameters and
+  algorithm choice are selected.
+- `--run-mode bootstrap-cv`: 5-fold CV by generating bootstrap paths normally
+  and splitting simulated paths into training/validation folds.
+- `--run-mode year-cv`: 5-fold CV by splitting actual years into contiguous
+  periods, bootstrapping training paths only within the four training periods
+  and validation paths only within the held-out period.
 
-This arm tries to recommend a horizon-by-horizon portfolio path rather than a
-single fixed portfolio per horizon. It is substantial and promising, but still
-experimental; do not describe it as final or clearly superior.
+Use CV modes to tune hyperparameters, regularization, smoothing, and algorithm
+selection. Use the full-dataset run for the final information product.
+`--early-stop` uses the full objective in `full` mode and validation objective
+in CV modes.
 
-Greedy and bisected approaches:
+Gradient-based simplex updates must project gradients onto the simplex tangent
+before Adam moments and again after Adam's per-coordinate scaling. Earlier
+convergence instability was primarily caused by missing this projection in the
+Adam implementation; after fixing it, convergence has been effective. Do not
+frame the current objective as inherently suspect merely because of old
+convergence notes.
 
-- `simulate_glide_path.py` implements the main greedy/local search path.
-- `simulate_bisected_glide_path.py` explores a path-level bisection strategy.
-- `plot_glide_path.py` and `plot_bisected_glide_path.py` plot those outputs.
+The unified gradient-check entry point is
+`consolidated_path_optimizer/check_gradients.py`.
 
-Important shared context:
+### Historical Arms
 
-- The current downside objective is usually `worst_4pct_mean`: the mean
-  annualized return among the worst 4% of outcomes.
-- The greedy/local-search scripts still use exact empirical one-year handling
-  for horizon 1, but the newer gradient optimizers now treat horizon 1 as an
-  optimizable row rather than a fixed anchor.
-- Neighborhood-limited search and projected continuation are used to reduce
-  noise and cost.
+The fixed-portfolio arm and older greedy/bisected glide-path scripts are
+historical context. The user is likely to discard the fixed-portfolio arm. Do
+not direct new work toward first-level scripts unless asked.
 
-Full-path optimizer:
+`simulate_retirement.py` still matters as the source of the already-computed
+post-retirement block consumed by the consolidated retirement optimizer.
+Retirement assumptions remain: retirement at age 65, withdrawals begin at age
+66, and the default first withdrawal is 3.5% of the age-65 balance.
 
-- `full_path_optimizer/` is a newer, substantial glide-path approach that builds
-  on lessons from the greedy and bisected algorithms.
-- It treats the whole 50x3 path as the optimization object, uses fixed bootstrap
-  paths/common random numbers, and performs projected gradient ascent over
-  horizons 1-50. Convex smoothing between gradient steps is an active
-  experimental stabilizer.
-- Gradient-based simplex updates must remove each row's normal component before
-  Adam moments and again after Adam's per-coordinate scaling; otherwise
-  equal-coordinate moves can be projected away and make starts look falsely
-  stalled.
-- Coordinate polishing exists, but recent exploratory work made it look more
-  like a historical-data overfitting step than a source of more plausible paths;
-  do not treat the polished path as automatically preferable to the
-  gradient-ascent output.
-- The main current concern is variability in maxima found from different starts,
-  suggesting initialization/multi-start design may matter more than additional
-  local polishing.
-- See `full_path_optimizer/NOTES.md` for the detailed rationale, results, and
-  validation notes rather than duplicating that material here.
+## Supporting Modules
 
-Experimental bisection/gradient optimizer:
-
-- `experimental_glide_path_optimizer/` is a newer research branch that combines
-  bisection control points with the full-path analytic gradient. It supports
-  endpoint caching and optional convex smoothing, but should be treated as
-  exploratory. It initializes horizon 1 from the empirical one-year point, then
-  allows gradient ascent to adjust it.
-- `experimental_glide_path_optimizer/check_random_convergence.py` is a
-  diagnostic script for random endpoint-initialized bisection/control-point
-  runs; it plots starting endpoints, traces, and final paths.
-
-Current research caution:
-
-- After trying greedy search, bisection/local search, direct full-path gradient
-  ascent, coordinate polishing, smoothing, and bisection-plus-gradient control
-  paths, the glide-path problem still struggles to converge predictably to a
-  clean, clearly believable solution.
-- This raises a basic-question concern: instability may come from the objective
-  itself, including the `worst_4pct_mean` downside metric and horizon weighting,
-  rather than merely from optimizer choice. Future work should be willing to
-  audit/reconsider the metric and objective before adding more optimizer
-  machinery.
-
-### Retirement Arm
-
-This arm models accumulation through retirement and withdrawals after
-retirement. It is experimental, but coherent enough for comparisons and
-follow-up tweaks.
-
-Primary scripts:
-
-- `simulate_retirement.py`
-- `plot_retirement_glide_path.py`
-- `plot_retirement_withdrawal_sweep.py`
-- `external_comparisons/compare_retirement_glide_paths.py`
-- `external_comparisons/plot_external_glide_paths.py`
-- `experimental_retirement_path_optimizer/optimize.py`
-- `experimental_retirement_path_optimizer/compare_external_glide_paths.py`
-
-Important context:
-
-- Retirement is assumed at age 65.
-- Withdrawals begin at age 66 and are fixed in real terms.
-- The default first withdrawal is 3.5% of the age-65 balance.
-- The major annual-contribution timing issue has been resolved; older runs
-  before that fix should be interpreted cautiously.
-- External comparison paths approximate Vanguard and Fidelity target-date-style
-  glide paths over the same three asset classes.
-- `experimental_retirement_path_optimizer/` is a parallel research branch using
-  bisection control points plus analytic gradient ascent for ages 20-65 while
-  retaining the selected retirement block. Its current contribution constants
-  are derived from the Fidelity external glide path, and its pre-retirement
-  objective floors wealth at zero and averages downside wealth outcomes across
-  ages 65-90. See that directory's README and `agent_notes.md` for details.
-
-## Shared Utilities
+Some first-level modules are still imported by the consolidated optimizer, but
+they are not active workflow entry points:
 
 - `dataset_variants.py`: dataset metadata and canonical paths.
-- `portfolio_helpers.py`: shared return columns, horizon constants, and the 2%
-  simplex grid.
-- `build_asset_class_returns.py`: asset-return extraction and growth plots.
-- `q02_diff_density.py`: convergence diagnostics for fixed and glide-path arms,
-  including newer downside metrics beyond `q02`.
+- `portfolio_helpers.py`: shared return columns, constants, and the 2% simplex
+  grid.
+- `build_asset_class_returns.py`: asset-return extraction when source data must
+  be rebuilt.
+- `simulate_returns.py` and `path_simulation.py`: bootstrap/path-generation and
+  objective helper routines reused by modern code.
 
 ## Interpretation Notes
 
