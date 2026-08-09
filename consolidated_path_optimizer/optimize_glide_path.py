@@ -323,23 +323,17 @@ def weighted_objectives_for_candidate_paths(
     objectives = np.zeros(candidate_paths.shape[0], dtype=float)
 
     for horizon in range(1, MAX_HORIZON + 1):
-        if horizon == 1:
-            one_year = asset_returns @ candidate_paths[:, 0, :].T
-            tail_count = max(1, int(np.ceil(one_year.shape[0] * tail_fraction)))
-            tail = np.partition(one_year, tail_count - 1, axis=0)[:tail_count]
-            scores = tail.mean(axis=0)
-        else:
-            horizon_weights_path = candidate_paths[:, :horizon, :][:, ::-1, :]
-            simple_returns = np.einsum(
-                "nha,cha->cnh",
-                path_returns[:, :horizon, :],
-                horizon_weights_path,
-                optimize=True,
-            )
-            annualized = np.exp(np.log1p(simple_returns).sum(axis=2) / horizon) - 1
-            tail_count = max(1, int(np.ceil(annualized.shape[1] * tail_fraction)))
-            tail = np.partition(annualized, tail_count - 1, axis=1)[:, :tail_count]
-            scores = tail.mean(axis=1)
+        horizon_weights_path = candidate_paths[:, :horizon, :][:, ::-1, :]
+        simple_returns = np.einsum(
+            "nha,cha->cnh",
+            path_returns[:, :horizon, :],
+            horizon_weights_path,
+            optimize=True,
+        )
+        annualized = np.exp(np.log1p(simple_returns).sum(axis=2) / horizon) - 1
+        tail_count = max(1, int(np.ceil(annualized.shape[1] * tail_fraction)))
+        tail = np.partition(annualized, tail_count - 1, axis=1)[:, :tail_count]
+        scores = tail.mean(axis=1)
         objectives += scores * horizon_weights[horizon - 1] / MAX_HORIZON
     return objectives
 

@@ -5,11 +5,10 @@ portfolio weights used when h years remain. An investor with horizon H
 experiences year offsets t = 0..H-1 holding weights W[H-t-1].
 
 The objective is the mean, across horizons 1..max_horizon, of the mean of the
-worst 4% of annualized outcomes per horizon, matching the convention used by
-`path_evaluation.evaluate_glide_path_weight_path`:
-
-- horizon 1 uses the exact empirical one-year outcomes (all observed years);
-- horizons 2+ use shared block-bootstrap simulation paths.
+worst 4% of annualized outcomes per horizon. All horizons, including horizon 1,
+use the shared block-bootstrap simulation paths during optimization and
+evaluation. Exact empirical horizon-1 selection is only used to initialize the
+path.
 
 Because the simulated paths are held fixed (common random numbers), the
 objective is a deterministic, piecewise-smooth function of W and admits an
@@ -128,15 +127,11 @@ def per_horizon_scores(
 ) -> np.ndarray:
     """worst-tail mean per horizon, shape (max_horizon,).
 
-    If `asset_returns` is provided, horizon 1 uses the exact empirical
-    one-year outcomes (matching evaluate_glide_path_weight_path).
+    `asset_returns` is accepted for backward-compatible call sites but is not
+    used; horizon 1 is evaluated from `path_returns` like every other horizon.
     """
     outcomes = annualized_outcomes(path_returns, weights)
-    scores = mean_of_worst_tail_fraction(outcomes, tail_fraction)
-    if asset_returns is not None:
-        empirical_one_year = asset_returns @ weights[0]
-        scores[0] = float(mean_of_worst_tail_fraction(empirical_one_year, tail_fraction))
-    return scores
+    return mean_of_worst_tail_fraction(outcomes, tail_fraction)
 
 
 def exponential_horizon_weights(
