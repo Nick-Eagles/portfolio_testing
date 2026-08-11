@@ -352,8 +352,8 @@ def optimize_from_start(
         if (
             early_stop
             and len(trace_rows) >= 4
-            and trace_rows[-4][_early_stop_column(validation_path_returns)]
-            > trace_rows[-1][_early_stop_column(validation_path_returns)]
+            and trace_rows[-4]["regularized_objective"]
+            > trace_rows[-1]["regularized_objective"]
         ):
             trace_rows = trace_rows[:-3]
             weight_history = weight_history[:-3]
@@ -361,14 +361,9 @@ def optimize_from_start(
             weights = weight_history[-1].copy()
             break
 
-    best_column = _early_stop_column(validation_path_returns)
-    best_index = int(np.argmax([row[best_column] for row in trace_rows]))
+    best_index = int(np.argmax([row["regularized_objective"] for row in trace_rows]))
     best_weights = weight_history[best_index].copy()
     return best_weights, pd.DataFrame(trace_rows), trajectory
-
-
-def _early_stop_column(validation_path_returns: np.ndarray | None) -> str:
-    return "validation_regularized_objective" if validation_path_returns is not None else "regularized_objective"
 
 
 def average_random_paths(

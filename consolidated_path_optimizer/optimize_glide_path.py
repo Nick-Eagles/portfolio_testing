@@ -86,6 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--year-cv-train-fraction", type=float, default=0.6)
     parser.add_argument("--bisections", type=int, default=DEFAULT_BISECTIONS)
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
+    parser.add_argument("--pre-bisection-gradient-steps", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument("--random-starts", type=int, default=DEFAULT_RANDOM_STARTS)
     parser.add_argument("--start-seed", type=int, default=DEFAULT_START_SEED)
@@ -680,8 +681,7 @@ def optimize_control_points(
         if (
             early_stop
             and len(rows) >= 4
-            and rows[-4][_early_stop_column(validation_path_returns)]
-            > rows[-1][_early_stop_column(validation_path_returns)]
+            and rows[-4]["regularized_objective"] > rows[-1]["regularized_objective"]
         ):
             rows = rows[:-3]
             value_history = value_history[:-3]
@@ -693,10 +693,6 @@ def optimize_control_points(
         horizon: values[index].copy() for index, horizon in enumerate(control_horizons)
     }
     return updated, rows, global_step
-
-
-def _early_stop_column(validation_path_returns: np.ndarray | None) -> str:
-    return "validation_regularized_objective" if validation_path_returns is not None else "regularized_objective"
 
 
 def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
@@ -818,6 +814,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("max_horizon", MAX_HORIZON),
             ("endpoint_grid_step", args.endpoint_grid_step),
             ("bisections", args.bisections),
+            ("pre_bisection_gradient_steps", args.pre_bisection_gradient_steps),
             ("gradient_steps_per_bisection", args.gradient_steps),
             ("learning_rate", args.learning_rate),
             ("curvature_penalty", args.curvature_penalty),
@@ -856,6 +853,8 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
 def validate_args(args: argparse.Namespace) -> None:
     if args.bisections < 0:
         raise ValueError("--bisections must be non-negative.")
+    if args.pre_bisection_gradient_steps < 0:
+        raise ValueError("--pre-bisection-gradient-steps must be non-negative.")
     if args.random_starts < 0:
         raise ValueError("--random-starts must be non-negative.")
     if args.curvature_penalty < 0:
@@ -972,6 +971,63 @@ def run_single_optimization(
         control_history = [control_frame(control_points, 0)]
         trace_rows: list[dict[str, float | int]] = []
         global_step = 0
+
+        if args.pre_bisection_gradient_steps:
+            print(
+                f"  {start_name} pre-bisection: 2 control points, "
+                f"{args.pre_bisection_gradient_steps} gradient steps",
+                flush=True,
+            )
+            control_points, rows, global_step = optimize_control_points(
+                path_returns=path_returns,
+                asset_returns=asset_returns,
+                control_points=control_points,
+                steps=args.pre_bisection_gradient_steps,
+                learning_rate=args.learning_rate,
+                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+                curvature_penalty=args.curvature_penalty,
+                curvature_huber_delta=args.curvature_huber_delta,
+                smooth=args.smooth,
+                smoothing_strength=args.smoothing_strength,
+                smoothing_bandwidth=args.smoothing_bandwidth,
+                early_stop=args.early_stop,
+                iteration=0,
+                starting_step=global_step,
+                validation_path_returns=validation_path_returns,
+                validation_asset_returns=validation_asset_returns,
+            )
+            trace_rows.extend(rows)
+            current_path = interpolate_control_points(control_points)
+            (
+                current_raw_objective,
+                current_curvature_penalty,
+                current_regularized_objective,
+            ) = regularized_objective_only(
+                path_returns,
+                current_path,
+                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+                curvature_penalty=args.curvature_penalty,
+                curvature_huber_delta=args.curvature_huber_delta,
+            )
+            current_canonical_objective = path_objective(
+                path_returns,
+                current_path,
+                asset_returns,
+                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            )
+            path_history = [
+                path_frame(
+                    control_points,
+                    0,
+                    current_raw_objective,
+                    current_curvature_penalty,
+                    args.curvature_penalty,
+                    current_regularized_objective,
+                    current_canonical_objective,
+                    global_step,
+                )
+            ]
+            control_history = [control_frame(control_points, 0)]
 
         for iteration in range(1, args.bisections + 1):
             control_points = bisect_control_points(control_points)
