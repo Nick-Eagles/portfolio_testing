@@ -58,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
     parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
+    parser.add_argument("--year-cv-train-fraction", type=float, default=0.6)
     parser.add_argument("--iterations", type=int, default=15)
     parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument(
@@ -398,6 +399,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--block-length must be at least 1.")
     if args.random_starts < 0:
         raise ValueError("--random-starts must be non-negative.")
+    if not 0 < args.year_cv_train_fraction < 1:
+        raise ValueError("--year-cv-train-fraction must be between 0 and 1.")
 
 
 def run_single_optimization(
@@ -631,6 +634,7 @@ def run_cross_validation(args: argparse.Namespace) -> None:
         block_length=args.block_length,
         run_mode=args.run_mode,
         stream="full_path",
+        year_cv_train_fraction=args.year_cv_train_fraction,
     )
     rows = []
     for fold in folds:

@@ -6,7 +6,6 @@ import zlib
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
 
 from portfolio_helpers import RETURN_COLUMNS
 from simulate_returns import (
@@ -94,6 +93,7 @@ def make_cv_folds(
     run_mode: str,
     stream: str,
     fold_count: int = 5,
+    year_cv_train_fraction: float = 0.6,
 ) -> list[FoldData]:
     if run_mode == RUN_MODE_FULL:
         raise ValueError("make_cv_folds is only for CV modes.")
@@ -101,6 +101,8 @@ def make_cv_folds(
         raise ValueError("Only 5-fold CV is currently supported.")
     if num_simulations < fold_count:
         raise ValueError("--num-simulations must be at least 5 in CV modes.")
+    if not 0 < year_cv_train_fraction < 1:
+        raise ValueError("--year-cv-train-fraction must be between 0 and 1.")
 
     full_asset_returns = asset_return_matrix(dataset)
     if run_mode == RUN_MODE_BOOTSTRAP_CV:
@@ -132,13 +134,24 @@ def make_cv_folds(
         return folds
 
     if run_mode == RUN_MODE_YEAR_CV:
-        year_chunks = np.array_split(np.arange(len(full_asset_returns)), fold_count)
+        year_count = len(full_asset_returns)
+        train_year_count = int(round(year_count * year_cv_train_fraction))
+        train_year_count = min(max(train_year_count, 1), year_count - 1)
+        validation_year_count = year_count - train_year_count
+        fold_starts = np.rint(
+            np.linspace(0, year_count, fold_count, endpoint=False)
+        ).astype(int) % year_count
         folds = []
-        for fold_index, validation_year_indexes in enumerate(year_chunks, start=1):
-            validation_mask = np.zeros(len(full_asset_returns), dtype=bool)
-            validation_mask[validation_year_indexes] = True
-            train_asset_returns = full_asset_returns[~validation_mask]
-            validation_asset_returns = full_asset_returns[validation_mask]
+        for fold_index, start in enumerate(fold_starts, start=1):
+            train_year_indexes = _circular_indexes(start, train_year_count, year_count)
+            validation_start = (start + train_year_count) % year_count
+            validation_year_indexes = _circular_indexes(
+                validation_start,
+                validation_year_count,
+                year_count,
+            )
+            train_asset_returns = full_asset_returns[train_year_indexes]
+            validation_asset_returns = full_asset_returns[validation_year_indexes]
             train_paths = make_path_returns_from_matrix(
                 asset_returns=train_asset_returns,
                 num_simulations=num_simulations,
@@ -186,3 +199,7 @@ def _rng(
         [seed, dataset_id, block_length, stream_id, fold_index]
     )
     return np.random.default_rng(seed_sequence)
+
+
+def _circular_indexes(start: int, length: int, total: int) -> np.ndarray:
+    return (np.arange(length, dtype=int) + start) % total
