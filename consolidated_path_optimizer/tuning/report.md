@@ -7,7 +7,6 @@ This pass tuned the consolidated optimizers using 5-fold `year-cv` with 2,000 si
 Use the bisection glide-path optimizer for the main product run, with:
 
 - `learning_rate = 0.04`
-- `pre_bisection_gradient_steps = 10`
 - `bisections = 4`
 - `gradient_steps = 10`
 - `curvature_penalty = 0.001`

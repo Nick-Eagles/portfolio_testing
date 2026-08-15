@@ -42,7 +42,6 @@ class Experiment:
     full_iterations: int = 20
     bisections: int = 5
     gradient_steps: int = 10
-    pre_bisection_gradient_steps: int = 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,43 +73,37 @@ def experiment_suite(name: str) -> list[Experiment]:
     ]
     glide_lr = [
         Experiment(
-            "glide_lr002_pre10_b5_g10",
+            "glide_lr002_b5_g10",
             "glide",
             learning_rate=0.02,
-            pre_bisection_gradient_steps=10,
         ),
         Experiment(
-            "glide_lr004_pre10_b5_g10",
+            "glide_lr004_b5_g10",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
         ),
         Experiment(
-            "glide_lr008_pre10_b5_g10",
+            "glide_lr008_b5_g10",
             "glide",
             learning_rate=0.08,
-            pre_bisection_gradient_steps=10,
         ),
     ]
     glide_shape = [
         Experiment(
-            "glide_lr004_pre0_b5_g10",
+            "glide_lr004_b5_g10_repeat",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=0,
         ),
         Experiment(
-            "glide_lr004_pre10_b4_g10",
+            "glide_lr004_b4_g10",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
         ),
         Experiment(
-            "glide_lr004_pre10_b6_g8",
+            "glide_lr004_b6_g8",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=6,
             gradient_steps=8,
         ),
@@ -119,17 +112,15 @@ def experiment_suite(name: str) -> list[Experiment]:
         Experiment("full_lr001_iter8", "full", learning_rate=0.01, full_iterations=8),
         Experiment("full_lr001_iter12", "full", learning_rate=0.01, full_iterations=12),
         Experiment(
-            "glide_lr004_pre10_b4_g10",
+            "glide_lr004_b4_g10",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
         ),
         Experiment(
             "glide_b4_reg0005_smooth0",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
             curvature_penalty=0.0005,
         ),
@@ -137,7 +128,6 @@ def experiment_suite(name: str) -> list[Experiment]:
             "glide_b4_reg001_smooth0",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
             curvature_penalty=0.001,
         ),
@@ -145,7 +135,6 @@ def experiment_suite(name: str) -> list[Experiment]:
             "glide_b4_reg001_smooth02",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
             curvature_penalty=0.001,
             smooth=True,
@@ -155,7 +144,6 @@ def experiment_suite(name: str) -> list[Experiment]:
             "glide_b4_reg001_smooth04",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
             curvature_penalty=0.001,
             smooth=True,
@@ -165,7 +153,6 @@ def experiment_suite(name: str) -> list[Experiment]:
             "glide_b4_reg002_smooth02",
             "glide",
             learning_rate=0.04,
-            pre_bisection_gradient_steps=10,
             bisections=4,
             curvature_penalty=0.002,
             smooth=True,
@@ -346,26 +333,25 @@ def optimize_glide_start(
     control_points = {1: start_path[0], core.MAX_HORIZON: start_path[-1]}
     all_rows: list[dict[str, Any]] = []
     global_step = 0
-    if experiment.pre_bisection_gradient_steps:
-        control_points, rows, global_step = glide.optimize_control_points(
-            path_returns=fold.train_path_returns,
-            asset_returns=fold.train_asset_returns,
-            control_points=control_points,
-            steps=experiment.pre_bisection_gradient_steps,
-            learning_rate=experiment.learning_rate,
-            horizon_50_weight_ratio=core.DEFAULT_HORIZON_50_WEIGHT_RATIO,
-            curvature_penalty=experiment.curvature_penalty,
-            curvature_huber_delta=experiment.curvature_huber_delta,
-            smooth=experiment.smooth,
-            smoothing_strength=experiment.smoothing_strength,
-            smoothing_bandwidth=experiment.smoothing_bandwidth,
-            early_stop=False,
-            iteration=0,
-            starting_step=global_step,
-            validation_path_returns=fold.validation_path_returns,
-            validation_asset_returns=fold.validation_asset_returns,
-        )
-        all_rows.extend(rows)
+    control_points, rows, global_step = glide.optimize_control_points(
+        path_returns=fold.train_path_returns,
+        asset_returns=fold.train_asset_returns,
+        control_points=control_points,
+        steps=experiment.gradient_steps,
+        learning_rate=experiment.learning_rate,
+        horizon_50_weight_ratio=core.DEFAULT_HORIZON_50_WEIGHT_RATIO,
+        curvature_penalty=experiment.curvature_penalty,
+        curvature_huber_delta=experiment.curvature_huber_delta,
+        smooth=experiment.smooth,
+        smoothing_strength=experiment.smoothing_strength,
+        smoothing_bandwidth=experiment.smoothing_bandwidth,
+        early_stop=False,
+        iteration=0,
+        starting_step=global_step,
+        validation_path_returns=fold.validation_path_returns,
+        validation_asset_returns=fold.validation_asset_returns,
+    )
+    all_rows.extend(rows)
     for iteration in range(1, experiment.bisections + 1):
         control_points = glide.bisect_control_points(control_points)
         control_points, rows, global_step = glide.optimize_control_points(
@@ -439,9 +425,6 @@ def summarize_experiment(
         "smoothing_strength": experiment.smoothing_strength if experiment.smooth else 0.0,
         "bisections": experiment.bisections if experiment.algorithm == "glide" else np.nan,
         "gradient_steps": experiment.gradient_steps if experiment.algorithm == "glide" else np.nan,
-        "pre_bisection_gradient_steps": (
-            experiment.pre_bisection_gradient_steps if experiment.algorithm == "glide" else np.nan
-        ),
         "full_iterations": experiment.full_iterations if experiment.algorithm == "full" else np.nan,
         "mean_train_best_by_validation": best_by_fold["train_objective"].mean(),
         "mean_validation_best": best_by_fold["validation_objective"].mean(),

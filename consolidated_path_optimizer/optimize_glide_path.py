@@ -36,12 +36,23 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
 from core import (
     DEFAULT_BLOCK_LENGTH,
+    DEFAULT_BISECTIONS,
+    DEFAULT_CURVATURE_HUBER_DELTA,
+    DEFAULT_CURVATURE_PENALTY,
+    DEFAULT_ENDPOINT_CHUNK_SIZE,
+    DEFAULT_ENDPOINT_GRID_STEP,
+    DEFAULT_GRADIENT_STEPS,
     DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_NUM_SIMULATIONS,
+    DEFAULT_RANDOM_STARTS,
+    DEFAULT_SMOOTHING_BANDWIDTH,
+    DEFAULT_SMOOTHING_STRENGTH,
+    DEFAULT_START_SEED,
+    DEFAULT_YEAR_CV_TRAIN_FRACTION,
     MAX_HORIZON,
     WEIGHT_COLUMNS,
     exponential_horizon_weights,
-    load_asset_return_matrix,
-    make_shared_path_returns,
     load_asset_return_matrix,
     make_shared_path_returns,
     objective_and_gradient,
@@ -62,31 +73,19 @@ from plots import (
     plot_validation_traces,
 )
 
-DEFAULT_BISECTIONS = 5
-DEFAULT_GRADIENT_STEPS = 10
-DEFAULT_LEARNING_RATE = 0.04
-DEFAULT_ENDPOINT_CHUNK_SIZE = 16
-DEFAULT_ENDPOINT_GRID_STEP = 0.05
-DEFAULT_CURVATURE_PENALTY = 0.001
-DEFAULT_CURVATURE_HUBER_DELTA = 0.1
-DEFAULT_SMOOTHING_STRENGTH = 0.2
-DEFAULT_SMOOTHING_BANDWIDTH = 10.0
 ENDPOINT_CACHE_VERSION = "weighted_linear_endpoint_v1"
-DEFAULT_RANDOM_STARTS = 4
-DEFAULT_START_SEED = 6217
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="from_1927")
-    parser.add_argument("--num-simulations", type=int, default=20_000)
+    parser.add_argument("--num-simulations", type=int, default=DEFAULT_NUM_SIMULATIONS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
     parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
-    parser.add_argument("--year-cv-train-fraction", type=float, default=0.6)
+    parser.add_argument("--year-cv-train-fraction", type=float, default=DEFAULT_YEAR_CV_TRAIN_FRACTION)
     parser.add_argument("--bisections", type=int, default=DEFAULT_BISECTIONS)
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
-    parser.add_argument("--pre-bisection-gradient-steps", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument("--random-starts", type=int, default=DEFAULT_RANDOM_STARTS)
     parser.add_argument("--start-seed", type=int, default=DEFAULT_START_SEED)
@@ -520,7 +519,6 @@ def path_frame(
     frame = weights_to_frame(interpolate_control_points(control_points))
     frame.insert(0, "iteration", iteration)
     frame.insert(1, "gradient_step", gradient_step)
-    frame["raw_objective"] = raw_objective
     frame["curvature_penalty_value"] = curvature_penalty_value
     frame["curvature_penalty_term"] = curvature_penalty_weight * curvature_penalty_value
     frame["regularized_objective"] = regularized_objective
@@ -652,14 +650,12 @@ def optimize_control_points(
                 "global_step": global_step,
                 "iteration": iteration,
                 "iteration_step": local_step,
-                "raw_objective_before_step": raw_objective_before,
                 "curvature_penalty_value_before_step": curvature_penalty_before,
                 "curvature_penalty_term_before_step": (
                     curvature_penalty * curvature_penalty_before
                 ),
                 "regularized_objective_before_step": regularized_objective_before,
                 "objective_before_step": regularized_objective_before,
-                "raw_objective": updated_raw_objective,
                 "curvature_penalty_value": updated_curvature_penalty,
                 "curvature_penalty_term": curvature_penalty * updated_curvature_penalty,
                 "regularized_objective": updated_regularized_objective,
@@ -764,14 +760,6 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
     )
     ax.plot(
         trace["global_step"],
-        trace["raw_objective"],
-        color="#666666",
-        linewidth=1.2,
-        linestyle="--",
-        label="Raw optimization objective",
-    )
-    ax.plot(
-        trace["global_step"],
         trace["canonical_objective"],
         color="#1f77b4",
         linewidth=1.2,
@@ -814,8 +802,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("max_horizon", MAX_HORIZON),
             ("endpoint_grid_step", args.endpoint_grid_step),
             ("bisections", args.bisections),
-            ("pre_bisection_gradient_steps", args.pre_bisection_gradient_steps),
-            ("gradient_steps_per_bisection", args.gradient_steps),
+            ("gradient_steps", args.gradient_steps),
             ("learning_rate", args.learning_rate),
             ("curvature_penalty", args.curvature_penalty),
             ("curvature_huber_delta", args.curvature_huber_delta),
@@ -829,15 +816,11 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("endpoint_cache_version", ENDPOINT_CACHE_VERSION),
             (
                 "objective",
-                "raw worst-tail mean objective minus Huber curvature penalty",
-            ),
-            (
-                "raw_objective",
-                "simulation objective optimized by gradient ascent, horizons 1-50",
+                "canonical worst-tail mean objective minus Huber curvature penalty",
             ),
             (
                 "canonical_objective",
-                "all-horizon weighted objective including exact empirical horizon 1",
+                "all-horizon weighted simulation objective",
             ),
             (
                 "path_shape",
@@ -853,8 +836,8 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
 def validate_args(args: argparse.Namespace) -> None:
     if args.bisections < 0:
         raise ValueError("--bisections must be non-negative.")
-    if args.pre_bisection_gradient_steps < 0:
-        raise ValueError("--pre-bisection-gradient-steps must be non-negative.")
+    if args.gradient_steps < 0:
+        raise ValueError("--gradient-steps must be non-negative.")
     if args.random_starts < 0:
         raise ValueError("--random-starts must be non-negative.")
     if args.curvature_penalty < 0:
@@ -950,8 +933,7 @@ def run_single_optimization(
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
         )
         print(
-            f"{start_name}: start raw={start_raw_objective:.6f}, "
-            f"regularized={start_regularized_objective:.6f}, "
+            f"{start_name}: start regularized={start_regularized_objective:.6f}, "
             f"canonical={start_canonical_objective:.6f}",
             flush=True,
         )
@@ -972,62 +954,61 @@ def run_single_optimization(
         trace_rows: list[dict[str, float | int]] = []
         global_step = 0
 
-        if args.pre_bisection_gradient_steps:
-            print(
-                f"  {start_name} pre-bisection: 2 control points, "
-                f"{args.pre_bisection_gradient_steps} gradient steps",
-                flush=True,
-            )
-            control_points, rows, global_step = optimize_control_points(
-                path_returns=path_returns,
-                asset_returns=asset_returns,
-                control_points=control_points,
-                steps=args.pre_bisection_gradient_steps,
-                learning_rate=args.learning_rate,
-                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
-                curvature_penalty=args.curvature_penalty,
-                curvature_huber_delta=args.curvature_huber_delta,
-                smooth=args.smooth,
-                smoothing_strength=args.smoothing_strength,
-                smoothing_bandwidth=args.smoothing_bandwidth,
-                early_stop=args.early_stop,
-                iteration=0,
-                starting_step=global_step,
-                validation_path_returns=validation_path_returns,
-                validation_asset_returns=validation_asset_returns,
-            )
-            trace_rows.extend(rows)
-            current_path = interpolate_control_points(control_points)
-            (
+        print(
+            f"  {start_name} pre-bisection: 2 control points, "
+            f"{args.gradient_steps} gradient steps",
+            flush=True,
+        )
+        control_points, rows, global_step = optimize_control_points(
+            path_returns=path_returns,
+            asset_returns=asset_returns,
+            control_points=control_points,
+            steps=args.gradient_steps,
+            learning_rate=args.learning_rate,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            curvature_penalty=args.curvature_penalty,
+            curvature_huber_delta=args.curvature_huber_delta,
+            smooth=args.smooth,
+            smoothing_strength=args.smoothing_strength,
+            smoothing_bandwidth=args.smoothing_bandwidth,
+            early_stop=args.early_stop,
+            iteration=0,
+            starting_step=global_step,
+            validation_path_returns=validation_path_returns,
+            validation_asset_returns=validation_asset_returns,
+        )
+        trace_rows.extend(rows)
+        current_path = interpolate_control_points(control_points)
+        (
+            current_raw_objective,
+            current_curvature_penalty,
+            current_regularized_objective,
+        ) = regularized_objective_only(
+            path_returns,
+            current_path,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+            curvature_penalty=args.curvature_penalty,
+            curvature_huber_delta=args.curvature_huber_delta,
+        )
+        current_canonical_objective = path_objective(
+            path_returns,
+            current_path,
+            asset_returns,
+            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
+        )
+        path_history = [
+            path_frame(
+                control_points,
+                0,
                 current_raw_objective,
                 current_curvature_penalty,
+                args.curvature_penalty,
                 current_regularized_objective,
-            ) = regularized_objective_only(
-                path_returns,
-                current_path,
-                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
-                curvature_penalty=args.curvature_penalty,
-                curvature_huber_delta=args.curvature_huber_delta,
+                current_canonical_objective,
+                global_step,
             )
-            current_canonical_objective = path_objective(
-                path_returns,
-                current_path,
-                asset_returns,
-                horizon_50_weight_ratio=args.horizon_50_weight_ratio,
-            )
-            path_history = [
-                path_frame(
-                    control_points,
-                    0,
-                    current_raw_objective,
-                    current_curvature_penalty,
-                    args.curvature_penalty,
-                    current_regularized_objective,
-                    current_canonical_objective,
-                    global_step,
-                )
-            ]
-            control_history = [control_frame(control_points, 0)]
+        ]
+        control_history = [control_frame(control_points, 0)]
 
         for iteration in range(1, args.bisections + 1):
             control_points = bisect_control_points(control_points)
@@ -1115,7 +1096,6 @@ def run_single_optimization(
         summaries.append(
             {
                 "start": start_name,
-                "initial_raw_objective": start_raw_objective,
                 "initial_regularized_objective": start_regularized_objective,
                 "initial_canonical_objective": start_canonical_objective,
                 "final_regularized_objective": final_regularized,

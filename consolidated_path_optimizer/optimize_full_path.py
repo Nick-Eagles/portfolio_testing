@@ -16,7 +16,18 @@ import pandas as pd
 
 from core import (
     DEFAULT_BLOCK_LENGTH,
+    DEFAULT_CURVATURE_HUBER_DELTA,
+    DEFAULT_CURVATURE_PENALTY,
+    DEFAULT_ENDPOINT_CHUNK_SIZE,
+    DEFAULT_ENDPOINT_GRID_STEP,
     DEFAULT_HORIZON_50_WEIGHT_RATIO,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_NUM_SIMULATIONS,
+    DEFAULT_RANDOM_STARTS,
+    DEFAULT_SMOOTHING_BANDWIDTH,
+    DEFAULT_SMOOTHING_STRENGTH,
+    DEFAULT_START_SEED,
+    DEFAULT_YEAR_CV_TRAIN_FRACTION,
     MAX_HORIZON,
     PROJECT_ROOT,
     SCRIPT_DIR,
@@ -34,8 +45,6 @@ from common import huber_curvature_penalty_and_gradient, smooth_path_between_gra
 from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
 from optimize_glide_path import (
     ENDPOINT_CACHE_VERSION,
-    DEFAULT_ENDPOINT_CHUNK_SIZE,
-    DEFAULT_ENDPOINT_GRID_STEP,
     build_start_paths,
     select_horizon_50_endpoint,
 )
@@ -47,20 +56,19 @@ from plots import (
 )
 from simulate_glide_path import DEFAULT_SEED
 
-DEFAULT_CURVATURE_PENALTY = 0.001
-DEFAULT_CURVATURE_HUBER_DELTA = 0.1
+DEFAULT_ITERATIONS = 15
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="from_1927")
-    parser.add_argument("--num-simulations", type=int, default=20_000)
+    parser.add_argument("--num-simulations", type=int, default=DEFAULT_NUM_SIMULATIONS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
     parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
-    parser.add_argument("--year-cv-train-fraction", type=float, default=0.6)
-    parser.add_argument("--iterations", type=int, default=15)
-    parser.add_argument("--learning-rate", type=float, default=0.02)
+    parser.add_argument("--year-cv-train-fraction", type=float, default=DEFAULT_YEAR_CV_TRAIN_FRACTION)
+    parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS)
+    parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument(
         "--early-stop",
         action="store_true",
@@ -97,8 +105,8 @@ def parse_args() -> argparse.Namespace:
             "horizon 1 weight. Weights are normalized to average 1."
         ),
     )
-    parser.add_argument("--random-starts", type=int, default=4)
-    parser.add_argument("--start-seed", type=int, default=6217)
+    parser.add_argument("--random-starts", type=int, default=DEFAULT_RANDOM_STARTS)
+    parser.add_argument("--start-seed", type=int, default=DEFAULT_START_SEED)
     parser.add_argument("--endpoint-grid-step", type=float, default=DEFAULT_ENDPOINT_GRID_STEP)
     parser.add_argument("--endpoint-chunk-size", type=int, default=DEFAULT_ENDPOINT_CHUNK_SIZE)
     parser.add_argument(
@@ -118,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-strength",
         type=float,
-        default=0.2,
+        default=DEFAULT_SMOOTHING_STRENGTH,
         help=(
             "Convex smoothing weight for each interior horizon when --smooth is set. "
             "0 leaves the path unchanged; 1 replaces each residual with a "
@@ -128,7 +136,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoothing-bandwidth",
         type=float,
-        default=10.0,
+        default=DEFAULT_SMOOTHING_BANDWIDTH,
         help=(
             "Gaussian kernel bandwidth, in horizons, for --smooth. Larger values "
             "make smoothing more global across the full path. Default favors broad "
@@ -220,7 +228,6 @@ def evaluated_state_row(
     )
     row = {
         "iteration": iteration,
-        "raw_objective": raw_objective,
         "curvature_penalty_value": penalty_value,
         "curvature_penalty_term": curvature_penalty * penalty_value,
         "regularized_objective": regularized_objective,
@@ -243,7 +250,6 @@ def evaluated_state_row(
         )
         row.update(
             {
-                "validation_raw_objective": validation_raw,
                 "validation_curvature_penalty_value": validation_penalty,
                 "validation_curvature_penalty_term": curvature_penalty * validation_penalty,
                 "validation_regularized_objective": validation_regularized,
@@ -380,6 +386,10 @@ def average_random_paths(
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if args.iterations < 0:
+        raise ValueError("--iterations must be non-negative.")
+    if args.learning_rate <= 0:
+        raise ValueError("--learning-rate must be positive.")
     if args.curvature_penalty < 0:
         raise ValueError("--curvature-penalty must be non-negative.")
     if args.curvature_huber_delta <= 0:
@@ -494,11 +504,8 @@ def run_single_optimization(
         results.append(
             {
                 "start": name,
-                "initial_raw_objective": trace.iloc[0]["raw_objective"],
                 "initial_regularized_objective": trace.iloc[0]["regularized_objective"],
-                "final_raw_objective": final_row["raw_objective"],
                 "final_regularized_objective": final_row["regularized_objective"],
-                "best_raw_objective": best_row["raw_objective"],
                 "best_regularized_objective": best_row["regularized_objective"],
                 "canonical_objective": canonical,
                 "validation_canonical_objective": validation_canonical,
@@ -516,9 +523,7 @@ def run_single_optimization(
             trajectories_dir / f"{name}.csv", index=False
         )
         print(
-            f"{name}: raw {trace.iloc[0]['raw_objective']:.6f} -> "
-            f"{best_row['raw_objective']:.6f}, "
-            f"regularized {trace.iloc[0]['regularized_objective']:.6f} -> "
+            f"{name}: regularized {trace.iloc[0]['regularized_objective']:.6f} -> "
             f"{best_row['regularized_objective']:.6f}, "
             f"canonical {canonical:.6f}"
             + (
@@ -553,11 +558,8 @@ def run_single_optimization(
         results.append(
             {
                 "start": "random_average",
-                "initial_raw_objective": np.nan,
                 "initial_regularized_objective": np.nan,
-                "final_raw_objective": random_average_raw,
                 "final_regularized_objective": random_average_regularized,
-                "best_raw_objective": random_average_raw,
                 "best_regularized_objective": random_average_regularized,
                 "canonical_objective": random_average_canonical,
                 "curvature_penalty_value": random_average_penalty,
@@ -573,7 +575,6 @@ def run_single_optimization(
         )
         print(
             "random_average: "
-            f"raw {random_average_raw:.6f}, "
             f"regularized {random_average_regularized:.6f}, "
             f"canonical {random_average_canonical:.6f}"
         )

@@ -48,6 +48,19 @@ from simulate_returns import (
     load_returns,
 )
 from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
+from core import (
+    DEFAULT_BISECTIONS,
+    DEFAULT_CURVATURE_HUBER_DELTA,
+    DEFAULT_CURVATURE_PENALTY,
+    DEFAULT_ENDPOINT_CHUNK_SIZE,
+    DEFAULT_ENDPOINT_GRID_STEP,
+    DEFAULT_GRADIENT_STEPS,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_NUM_SIMULATIONS,
+    DEFAULT_SMOOTHING_BANDWIDTH,
+    DEFAULT_SMOOTHING_STRENGTH,
+    DEFAULT_YEAR_CV_TRAIN_FRACTION,
+)
 from plots import plot_validation_traces
 
 OPTIMIZED_START_AGE = MIN_STARTING_AGE
@@ -58,13 +71,6 @@ RETIREMENT_EVALUATION_AGES = np.arange(FIXED_ANCHOR_AGE, MAX_STARTING_AGE + 1)
 TAIL_FRACTION = 0.04
 PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR = 0.0
 DEFAULT_AGE_65_WEIGHT_RATIO = 8.0
-DEFAULT_BISECTIONS = 5
-DEFAULT_GRADIENT_STEPS = 10
-DEFAULT_LEARNING_RATE = 0.04
-DEFAULT_ENDPOINT_GRID_STEP = 0.05
-DEFAULT_ENDPOINT_CHUNK_SIZE = 16
-DEFAULT_CURVATURE_PENALTY = 0.001
-DEFAULT_CURVATURE_HUBER_DELTA = 0.1
 ENDPOINT_CACHE_VERSION = "retirement_age20_endpoint_v1"
 DEFAULT_CONTRIBUTION_REFERENCE_PATH = (
     PROJECT_ROOT / "external_comparisons" / "fidelity_glide_path.csv"
@@ -74,14 +80,13 @@ DEFAULT_CONTRIBUTION_REFERENCE_PATH = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="from_1927")
-    parser.add_argument("--num-simulations", type=int, default=20_000)
+    parser.add_argument("--num-simulations", type=int, default=DEFAULT_NUM_SIMULATIONS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--block-length", type=int, default=DEFAULT_BLOCK_LENGTH)
     parser.add_argument("--run-mode", choices=RUN_MODES, default=RUN_MODE_FULL)
-    parser.add_argument("--year-cv-train-fraction", type=float, default=0.6)
+    parser.add_argument("--year-cv-train-fraction", type=float, default=DEFAULT_YEAR_CV_TRAIN_FRACTION)
     parser.add_argument("--bisections", type=int, default=DEFAULT_BISECTIONS)
     parser.add_argument("--gradient-steps", type=int, default=DEFAULT_GRADIENT_STEPS)
-    parser.add_argument("--pre-bisection-gradient-steps", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument(
         "--curvature-penalty",
@@ -125,8 +130,8 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--smooth", action="store_true")
-    parser.add_argument("--smoothing-strength", type=float, default=0.2)
-    parser.add_argument("--smoothing-bandwidth", type=float, default=10.0)
+    parser.add_argument("--smoothing-strength", type=float, default=DEFAULT_SMOOTHING_STRENGTH)
+    parser.add_argument("--smoothing-bandwidth", type=float, default=DEFAULT_SMOOTHING_BANDWIDTH)
     parser.add_argument("--early-stop", action="store_true")
     parser.add_argument(
         "--endpoint-cache-dir",
@@ -814,14 +819,12 @@ def optimize_control_points(
                 "global_step": global_step,
                 "iteration": iteration,
                 "iteration_step": local_step,
-                "raw_objective_before_step": raw_objective_before,
                 "curvature_penalty_value_before_step": curvature_penalty_before,
                 "curvature_penalty_term_before_step": (
                     curvature_penalty * curvature_penalty_before
                 ),
                 "regularized_objective_before_step": regularized_objective_before,
                 "objective_before_step": regularized_objective_before,
-                "raw_objective": updated_raw_objective,
                 "curvature_penalty_value": updated_curvature_penalty,
                 "curvature_penalty_term": curvature_penalty * updated_curvature_penalty,
                 "regularized_objective": updated_regularized_objective,
@@ -872,7 +875,6 @@ def path_frame(
                 "stock_weight": accumulation[index, 0],
                 "bond_weight": accumulation[index, 1],
                 "t_bill_weight": accumulation[index, 2],
-                "raw_objective": raw_objective,
                 "curvature_penalty_value": curvature_penalty_value,
                 "curvature_penalty_term": curvature_penalty_weight * curvature_penalty_value,
                 "regularized_objective": regularized_objective,
@@ -891,7 +893,6 @@ def path_frame(
                 "stock_weight": weights[0],
                 "bond_weight": weights[1],
                 "t_bill_weight": weights[2],
-                "raw_objective": raw_objective,
                 "curvature_penalty_value": curvature_penalty_value,
                 "curvature_penalty_term": curvature_penalty_weight * curvature_penalty_value,
                 "regularized_objective": regularized_objective,
@@ -954,14 +955,6 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
         markersize=2.5,
         label="Regularized objective",
     )
-    ax.plot(
-        trace["global_step"],
-        trace["raw_objective"],
-        color="#666666",
-        linewidth=1.2,
-        linestyle="--",
-        label="Raw objective",
-    )
     for iteration, group in trace.groupby("iteration"):
         ax.axvline(int(group["global_step"].min()), color="#777777", linewidth=0.8, alpha=0.35)
     ax.set_title("Objective at Every Gradient Step")
@@ -1021,19 +1014,14 @@ def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: 
             ("fixed_retirement_block", f"{FIXED_ANCHOR_AGE}-{MAX_STARTING_AGE}"),
             (
                 "objective",
-                "raw retirement objective minus Huber curvature penalty",
-            ),
-            (
-                "raw_objective",
-                "weighted mean across starting ages 20-65 of the mean worst-4% floored wealth over ages 65-90",
+                "retirement objective minus Huber curvature penalty",
             ),
             ("pre_retirement_terminal_wealth_floor", PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR),
             ("contribution_scaling", "age 20 contribution is 1; later starting ages use 1 / contribution-reference mean entering balance"),
             ("age_65_weight_ratio", args.age_65_weight_ratio),
             ("endpoint_grid_step", args.endpoint_grid_step),
             ("bisections", args.bisections),
-            ("pre_bisection_gradient_steps", args.pre_bisection_gradient_steps),
-            ("gradient_steps_per_bisection", args.gradient_steps),
+            ("gradient_steps", args.gradient_steps),
             ("learning_rate", args.learning_rate),
             ("curvature_penalty", args.curvature_penalty),
             ("curvature_huber_delta", args.curvature_huber_delta),
@@ -1051,8 +1039,6 @@ def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: 
 def validate_args(args: argparse.Namespace) -> None:
     if args.bisections < 0:
         raise ValueError("--bisections must be non-negative.")
-    if args.pre_bisection_gradient_steps < 0:
-        raise ValueError("--pre-bisection-gradient-steps must be non-negative.")
     if args.gradient_steps < 0:
         raise ValueError("--gradient-steps must be non-negative.")
     if args.learning_rate <= 0:
@@ -1139,7 +1125,6 @@ def run_single_optimization(
     print(f"fixed age-65 anchor: {np.round(fixed_age_65, 4)}", flush=True)
     print(
         f"age-20 endpoint: {np.round(age_20_endpoint, 4)}, "
-        f"start raw={start_raw_objective:.6f}, "
         f"start regularized={start_regularized_objective:.6f}, "
         f"curvature_penalty_term={args.curvature_penalty * start_curvature_penalty:.6f}",
         flush=True,
@@ -1161,58 +1146,56 @@ def run_single_optimization(
     trace_rows: list[dict[str, float | int]] = []
     global_step = 0
 
-    if args.pre_bisection_gradient_steps:
-        print(
-            f"pre-bisection: 2 control points, "
-            f"{args.pre_bisection_gradient_steps} gradient steps",
-            flush=True,
-        )
-        control_points, rows, global_step = optimize_control_points(
-            path_returns=path_returns,
-            fixed_weights_by_age=fixed_weights_by_age,
-            contributions=contributions,
-            control_points=control_points,
-            steps=args.pre_bisection_gradient_steps,
-            learning_rate=args.learning_rate,
-            age_65_weight_ratio=args.age_65_weight_ratio,
-            curvature_penalty=args.curvature_penalty,
-            curvature_huber_delta=args.curvature_huber_delta,
-            smooth=args.smooth,
-            smoothing_strength=args.smoothing_strength,
-            smoothing_bandwidth=args.smoothing_bandwidth,
-            early_stop=args.early_stop,
-            iteration=0,
-            starting_step=global_step,
-            validation_path_returns=validation_path_returns,
-        )
-        trace_rows.extend(rows)
-        current_path = interpolate_control_points(control_points)
-        (
+    print(
+        f"pre-bisection: 2 control points, {args.gradient_steps} gradient steps",
+        flush=True,
+    )
+    control_points, rows, global_step = optimize_control_points(
+        path_returns=path_returns,
+        fixed_weights_by_age=fixed_weights_by_age,
+        contributions=contributions,
+        control_points=control_points,
+        steps=args.gradient_steps,
+        learning_rate=args.learning_rate,
+        age_65_weight_ratio=args.age_65_weight_ratio,
+        curvature_penalty=args.curvature_penalty,
+        curvature_huber_delta=args.curvature_huber_delta,
+        smooth=args.smooth,
+        smoothing_strength=args.smoothing_strength,
+        smoothing_bandwidth=args.smoothing_bandwidth,
+        early_stop=args.early_stop,
+        iteration=0,
+        starting_step=global_step,
+        validation_path_returns=validation_path_returns,
+    )
+    trace_rows.extend(rows)
+    current_path = interpolate_control_points(control_points)
+    (
+        current_raw_objective,
+        current_curvature_penalty,
+        current_regularized_objective,
+    ) = regularized_terminal_objective(
+        path_returns=path_returns,
+        accumulation_weights=current_path,
+        fixed_weights_by_age=fixed_weights_by_age,
+        contributions=contributions,
+        age_65_weight_ratio=args.age_65_weight_ratio,
+        curvature_penalty=args.curvature_penalty,
+        curvature_huber_delta=args.curvature_huber_delta,
+    )
+    path_history = [
+        path_frame(
+            control_points,
+            fixed_weights_by_age,
+            0,
             current_raw_objective,
             current_curvature_penalty,
+            args.curvature_penalty,
             current_regularized_objective,
-        ) = regularized_terminal_objective(
-            path_returns=path_returns,
-            accumulation_weights=current_path,
-            fixed_weights_by_age=fixed_weights_by_age,
-            contributions=contributions,
-            age_65_weight_ratio=args.age_65_weight_ratio,
-            curvature_penalty=args.curvature_penalty,
-            curvature_huber_delta=args.curvature_huber_delta,
+            global_step,
         )
-        path_history = [
-            path_frame(
-                control_points,
-                fixed_weights_by_age,
-                0,
-                current_raw_objective,
-                current_curvature_penalty,
-                args.curvature_penalty,
-                current_regularized_objective,
-                global_step,
-            )
-        ]
-        control_history = [control_frame(control_points, 0)]
+    ]
+    control_history = [control_frame(control_points, 0)]
 
     for iteration in range(1, args.bisections + 1):
         control_points = bisect_control_points(control_points)
@@ -1264,8 +1247,7 @@ def run_single_optimization(
         )
         control_history.append(control_frame(control_points, iteration))
         print(
-            f"  raw={current_raw_objective:.6f}, "
-            f"regularized={current_regularized_objective:.6f}, "
+            f"  regularized={current_regularized_objective:.6f}, "
             f"curvature_penalty_term={args.curvature_penalty * current_curvature_penalty:.6f}",
             flush=True,
         )
