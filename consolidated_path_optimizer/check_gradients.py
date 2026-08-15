@@ -84,7 +84,7 @@ def check_glide(args: argparse.Namespace) -> None:
     direction -= direction.mean(axis=1, keepdims=True)
     direction /= np.linalg.norm(direction)
 
-    raw, penalty, regularized, gradient = glide.regularized_objective_and_gradient(
+    canonical, penalty, regularized, gradient = glide.regularized_objective_and_gradient(
         path_returns,
         weights,
         horizon_50_weight_ratio=core.DEFAULT_HORIZON_50_WEIGHT_RATIO,
@@ -92,7 +92,7 @@ def check_glide(args: argparse.Namespace) -> None:
         curvature_huber_delta=glide.DEFAULT_CURVATURE_HUBER_DELTA,
     )
     analytic = float(np.sum(gradient * direction))
-    print(f"raw_objective={raw:.12f}")
+    print(f"canonical_objective={canonical:.12f}")
     print(f"curvature_penalty_value={penalty:.12f}")
     print(f"regularized_objective={regularized:.12f}")
     print(f"analytic_directional_gradient={analytic:.12e}")
@@ -145,7 +145,7 @@ def check_retirement(args: argparse.Namespace) -> None:
     direction[-1] = 0.0
     direction /= np.linalg.norm(direction)
 
-    raw, penalty, regularized, gradient = retirement.regularized_terminal_values_and_gradient(
+    canonical, penalty, regularized, gradient = retirement.regularized_terminal_values_and_gradient(
         path_returns=path_returns,
         accumulation_weights=weights,
         fixed_weights_by_age=fixed_weights_by_age,
@@ -155,7 +155,7 @@ def check_retirement(args: argparse.Namespace) -> None:
         curvature_huber_delta=retirement.DEFAULT_CURVATURE_HUBER_DELTA,
     )
     analytic = float(np.sum(gradient * direction))
-    print(f"raw_objective={raw:.12f}")
+    print(f"canonical_objective={canonical:.12f}")
     print(f"curvature_penalty_value={penalty:.12f}")
     print(f"regularized_objective={regularized:.12f}")
     print(f"analytic_directional_gradient={analytic:.12e}")

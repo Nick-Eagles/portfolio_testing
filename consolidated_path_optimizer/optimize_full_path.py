@@ -163,7 +163,7 @@ def regularized_objective_and_gradient(
     curvature_penalty: float,
     curvature_huber_delta: float,
 ) -> tuple[float, float, float, np.ndarray]:
-    raw_objective, raw_gradient, _ = objective_and_gradient(
+    canonical_objective, canonical_gradient, _ = objective_and_gradient(
         path_returns,
         weights,
         min_horizon=1,
@@ -173,9 +173,9 @@ def regularized_objective_and_gradient(
         weights,
         curvature_huber_delta,
     )
-    regularized_objective = raw_objective - curvature_penalty * penalty_value
-    regularized_gradient = raw_gradient - curvature_penalty * penalty_gradient
-    return raw_objective, penalty_value, regularized_objective, regularized_gradient
+    regularized_objective = canonical_objective - curvature_penalty * penalty_value
+    regularized_gradient = canonical_gradient - curvature_penalty * penalty_gradient
+    return canonical_objective, penalty_value, regularized_objective, regularized_gradient
 
 
 def regularized_objective_only(
@@ -185,7 +185,7 @@ def regularized_objective_only(
     curvature_penalty: float,
     curvature_huber_delta: float,
 ) -> tuple[float, float, float]:
-    raw_objective, _, _ = objective_and_gradient(
+    canonical_objective, _, _ = objective_and_gradient(
         path_returns,
         weights,
         min_horizon=1,
@@ -195,8 +195,8 @@ def regularized_objective_only(
         weights,
         curvature_huber_delta,
     )
-    regularized_objective = raw_objective - curvature_penalty * penalty_value
-    return raw_objective, penalty_value, regularized_objective
+    regularized_objective = canonical_objective - curvature_penalty * penalty_value
+    return canonical_objective, penalty_value, regularized_objective
 
 
 def evaluated_state_row(
@@ -213,18 +213,12 @@ def evaluated_state_row(
     validation_path_returns: np.ndarray | None = None,
     validation_asset_returns: np.ndarray | None = None,
 ) -> dict[str, float | int | bool]:
-    raw_objective, penalty_value, regularized_objective = regularized_objective_only(
+    canonical_objective, penalty_value, regularized_objective = regularized_objective_only(
         path_returns,
         weights,
         horizon_50_weight_ratio=horizon_50_weight_ratio,
         curvature_penalty=curvature_penalty,
         curvature_huber_delta=curvature_huber_delta,
-    )
-    canonical_objective = path_objective(
-        path_returns,
-        weights,
-        asset_returns,
-        horizon_50_weight_ratio=horizon_50_weight_ratio,
     )
     row = {
         "iteration": iteration,
@@ -232,16 +226,12 @@ def evaluated_state_row(
         "curvature_penalty_term": curvature_penalty * penalty_value,
         "regularized_objective": regularized_objective,
         "canonical_objective": canonical_objective,
-        "objective": regularized_objective,
         "smooth": smooth,
         "smoothing_strength": smoothing_strength if smooth else 0.0,
         "smoothing_bandwidth": smoothing_bandwidth if smooth else 0.0,
     }
     if validation_path_returns is not None:
-        validation_asset = (
-            asset_returns if validation_asset_returns is None else validation_asset_returns
-        )
-        validation_raw, validation_penalty, validation_regularized = regularized_objective_only(
+        validation_canonical, validation_penalty, validation_regularized = regularized_objective_only(
             validation_path_returns,
             weights,
             horizon_50_weight_ratio=horizon_50_weight_ratio,
@@ -253,13 +243,7 @@ def evaluated_state_row(
                 "validation_curvature_penalty_value": validation_penalty,
                 "validation_curvature_penalty_term": curvature_penalty * validation_penalty,
                 "validation_regularized_objective": validation_regularized,
-                "validation_canonical_objective": path_objective(
-                    validation_path_returns,
-                    weights,
-                    validation_asset,
-                    horizon_50_weight_ratio=horizon_50_weight_ratio,
-                ),
-                "validation_objective": validation_regularized,
+                "validation_canonical_objective": validation_canonical,
             }
         )
     return row
@@ -308,7 +292,7 @@ def optimize_from_start(
     trajectory = [weights_to_frame(weights).assign(iteration=0)]
 
     for step in range(1, iterations + 1):
-        raw_objective, penalty_value, regularized_objective, gradient = (
+        canonical_objective, penalty_value, regularized_objective, gradient = (
             regularized_objective_and_gradient(
                 path_returns,
                 weights,
@@ -544,11 +528,7 @@ def run_single_optimization(
             asset_returns,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
         )
-        (
-            random_average_raw,
-            random_average_penalty,
-            random_average_regularized,
-        ) = regularized_objective_only(
+        _, random_average_penalty, random_average_regularized = regularized_objective_only(
             path_returns,
             random_average_weights,
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,

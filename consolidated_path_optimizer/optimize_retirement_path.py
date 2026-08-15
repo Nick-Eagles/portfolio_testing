@@ -418,7 +418,7 @@ def regularized_terminal_values_and_gradient(
     curvature_penalty: float,
     curvature_huber_delta: float,
 ) -> tuple[float, float, float, np.ndarray]:
-    raw_objective, raw_gradient, _ = terminal_values_and_gradient(
+    canonical_objective, canonical_gradient, _ = terminal_values_and_gradient(
         path_returns=path_returns,
         accumulation_weights=accumulation_weights,
         fixed_weights_by_age=fixed_weights_by_age,
@@ -429,9 +429,9 @@ def regularized_terminal_values_and_gradient(
         accumulation_weights,
         curvature_huber_delta,
     )
-    regularized_objective = raw_objective - curvature_penalty * penalty_value
-    regularized_gradient = raw_gradient - curvature_penalty * penalty_gradient
-    return raw_objective, penalty_value, regularized_objective, regularized_gradient
+    regularized_objective = canonical_objective - curvature_penalty * penalty_value
+    regularized_gradient = canonical_gradient - curvature_penalty * penalty_gradient
+    return canonical_objective, penalty_value, regularized_objective, regularized_gradient
 
 
 def regularized_terminal_objective(
@@ -443,7 +443,7 @@ def regularized_terminal_objective(
     curvature_penalty: float,
     curvature_huber_delta: float,
 ) -> tuple[float, float, float]:
-    raw_objective, _ = terminal_objective(
+    canonical_objective, _ = terminal_objective(
         path_returns=path_returns,
         accumulation_weights=accumulation_weights,
         fixed_weights_by_age=fixed_weights_by_age,
@@ -454,8 +454,8 @@ def regularized_terminal_objective(
         accumulation_weights,
         curvature_huber_delta,
     )
-    regularized_objective = raw_objective - curvature_penalty * penalty_value
-    return raw_objective, penalty_value, regularized_objective
+    regularized_objective = canonical_objective - curvature_penalty * penalty_value
+    return canonical_objective, penalty_value, regularized_objective
 
 
 def simulate_terminal_values_for_start(
@@ -679,6 +679,8 @@ def select_age_20_endpoint(
         with settings_cache.open("r", encoding="utf-8") as handle:
             if json.load(handle) == normalized_settings:
                 summary = pd.read_csv(grid_cache)
+                if "canonical_objective" not in summary.columns and "objective" in summary.columns:
+                    summary = summary.rename(columns={"objective": "canonical_objective"})
                 return select_best_endpoint(summary), summary
 
     grid = generate_simplex_grid(endpoint_grid_step)
@@ -699,7 +701,7 @@ def select_age_20_endpoint(
             objectives.append(objective)
 
     summary = grid.copy()
-    summary["objective"] = objectives
+    summary["canonical_objective"] = objectives
     if use_cache:
         cache_dir.mkdir(parents=True, exist_ok=True)
         summary.to_csv(grid_cache, index=False)
@@ -711,7 +713,7 @@ def select_age_20_endpoint(
 
 def select_best_endpoint(summary: pd.DataFrame) -> np.ndarray:
     selected = summary.sort_values(
-        ["objective", "stock_weight", "bond_weight", "t_bill_weight"],
+        ["canonical_objective", "stock_weight", "bond_weight", "t_bill_weight"],
         ascending=[False, False, False, False],
     ).iloc[0]
     return selected[WEIGHT_COLUMNS].to_numpy(dtype=float)
@@ -749,7 +751,7 @@ def optimize_control_points(
     for local_step in range(1, steps + 1):
         full_path = jacobian @ values
         (
-            raw_objective_before,
+            canonical_objective_before,
             curvature_penalty_before,
             regularized_objective_before,
             full_gradient,
@@ -787,7 +789,7 @@ def optimize_control_points(
 
         global_step += 1
         (
-            updated_raw_objective,
+            updated_canonical_objective,
             updated_curvature_penalty,
             updated_regularized_objective,
         ) = regularized_terminal_objective(
@@ -802,7 +804,7 @@ def optimize_control_points(
         validation_regularized_objective = np.nan
         if validation_path_returns is not None:
             (
-                _validation_raw,
+                _validation_canonical,
                 _validation_penalty,
                 validation_regularized_objective,
             ) = regularized_terminal_objective(
@@ -824,13 +826,11 @@ def optimize_control_points(
                     curvature_penalty * curvature_penalty_before
                 ),
                 "regularized_objective_before_step": regularized_objective_before,
-                "objective_before_step": regularized_objective_before,
                 "curvature_penalty_value": updated_curvature_penalty,
                 "curvature_penalty_term": curvature_penalty * updated_curvature_penalty,
                 "regularized_objective": updated_regularized_objective,
-                "objective": updated_regularized_objective,
+                "canonical_objective": updated_canonical_objective,
                 "validation_regularized_objective": validation_regularized_objective,
-                "validation_objective": validation_regularized_objective,
                 "control_point_count": len(control_ages),
                 "curvature_penalty_weight": curvature_penalty,
                 "curvature_huber_delta": curvature_huber_delta,
@@ -858,7 +858,7 @@ def path_frame(
     control_points: dict[int, np.ndarray],
     fixed_weights_by_age: dict[int, np.ndarray],
     iteration: int,
-    raw_objective: float,
+    canonical_objective: float,
     curvature_penalty_value: float,
     curvature_penalty_weight: float,
     regularized_objective: float,
@@ -878,7 +878,7 @@ def path_frame(
                 "curvature_penalty_value": curvature_penalty_value,
                 "curvature_penalty_term": curvature_penalty_weight * curvature_penalty_value,
                 "regularized_objective": regularized_objective,
-                "objective": regularized_objective,
+                "canonical_objective": canonical_objective,
                 "is_control_point": int(age) in control_points,
                 "is_fixed_retirement_block": int(age) == FIXED_ANCHOR_AGE,
             }
@@ -896,7 +896,7 @@ def path_frame(
                 "curvature_penalty_value": curvature_penalty_value,
                 "curvature_penalty_term": curvature_penalty_weight * curvature_penalty_value,
                 "regularized_objective": regularized_objective,
-                "objective": regularized_objective,
+                "canonical_objective": canonical_objective,
                 "is_control_point": False,
                 "is_fixed_retirement_block": True,
             }
@@ -1013,7 +1013,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: 
             ("optimized_ages", f"{OPTIMIZED_START_AGE}-{FIXED_ANCHOR_AGE}"),
             ("fixed_retirement_block", f"{FIXED_ANCHOR_AGE}-{MAX_STARTING_AGE}"),
             (
-                "objective",
+                "regularized_objective",
                 "retirement objective minus Huber curvature penalty",
             ),
             ("pre_retirement_terminal_wealth_floor", PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR),
@@ -1110,7 +1110,7 @@ def run_single_optimization(
     control_points = {OPTIMIZED_START_AGE: age_20_endpoint, FIXED_ANCHOR_AGE: fixed_age_65}
     start_path = interpolate_control_points(control_points)
     (
-        start_raw_objective,
+        start_canonical_objective,
         start_curvature_penalty,
         start_regularized_objective,
     ) = regularized_terminal_objective(
@@ -1135,7 +1135,7 @@ def run_single_optimization(
             control_points,
             fixed_weights_by_age,
             0,
-            start_raw_objective,
+            start_canonical_objective,
             start_curvature_penalty,
             args.curvature_penalty,
             start_regularized_objective,
@@ -1171,7 +1171,7 @@ def run_single_optimization(
     trace_rows.extend(rows)
     current_path = interpolate_control_points(control_points)
     (
-        current_raw_objective,
+        current_canonical_objective,
         current_curvature_penalty,
         current_regularized_objective,
     ) = regularized_terminal_objective(
@@ -1188,7 +1188,7 @@ def run_single_optimization(
             control_points,
             fixed_weights_by_age,
             0,
-            current_raw_objective,
+            current_canonical_objective,
             current_curvature_penalty,
             args.curvature_penalty,
             current_regularized_objective,
@@ -1221,7 +1221,7 @@ def run_single_optimization(
         trace_rows.extend(rows)
         current_path = interpolate_control_points(control_points)
         (
-            current_raw_objective,
+            current_canonical_objective,
             current_curvature_penalty,
             current_regularized_objective,
         ) = regularized_terminal_objective(
@@ -1238,7 +1238,7 @@ def run_single_optimization(
                 control_points,
                 fixed_weights_by_age,
                 iteration,
-                current_raw_objective,
+                current_canonical_objective,
                 current_curvature_penalty,
                 args.curvature_penalty,
                 current_regularized_objective,

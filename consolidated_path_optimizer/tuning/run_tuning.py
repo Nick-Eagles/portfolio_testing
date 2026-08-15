@@ -289,12 +289,12 @@ def run_experiment(
                 )
                 control_count = 2**experiment.bisections + 1
 
-            train_objective = core.path_objective(
+            train_canonical_objective = core.path_objective(
                 fold.train_path_returns,
                 weights,
                 fold.train_asset_returns,
             )
-            validation_objective = core.path_objective(
+            validation_canonical_objective = core.path_objective(
                 fold.validation_path_returns,
                 weights,
                 fold.validation_asset_returns,
@@ -309,8 +309,8 @@ def run_experiment(
                     "algorithm": experiment.algorithm,
                     "fold": fold.name,
                     "start": start_name,
-                    "train_objective": train_objective,
-                    "validation_objective": validation_objective,
+                    "train_canonical_objective": train_canonical_objective,
+                    "validation_canonical_objective": validation_canonical_objective,
                     "curvature_penalty_value": curvature,
                     "control_count": control_count,
                 }
@@ -406,12 +406,12 @@ def summarize_experiment(
     path_frame: pd.DataFrame,
 ) -> dict[str, Any]:
     best_by_fold = (
-        fold_frame.sort_values(["fold", "validation_objective"], ascending=[True, False])
+        fold_frame.sort_values(["fold", "validation_canonical_objective"], ascending=[True, False])
         .groupby("fold", as_index=False)
         .head(1)
     )
     best_by_train = (
-        fold_frame.sort_values(["fold", "train_objective"], ascending=[True, False])
+        fold_frame.sort_values(["fold", "train_canonical_objective"], ascending=[True, False])
         .groupby("fold", as_index=False)
         .head(1)
     )
@@ -426,12 +426,12 @@ def summarize_experiment(
         "bisections": experiment.bisections if experiment.algorithm == "glide" else np.nan,
         "gradient_steps": experiment.gradient_steps if experiment.algorithm == "glide" else np.nan,
         "full_iterations": experiment.full_iterations if experiment.algorithm == "full" else np.nan,
-        "mean_train_best_by_validation": best_by_fold["train_objective"].mean(),
-        "mean_validation_best": best_by_fold["validation_objective"].mean(),
-        "mean_train_best_by_train": best_by_train["train_objective"].mean(),
-        "mean_validation_best_by_train": best_by_train["validation_objective"].mean(),
-        "mean_validation_good_start": good_start["validation_objective"].mean(),
-        "mean_validation_all_starts": fold_frame["validation_objective"].mean(),
+        "mean_train_best_by_validation": best_by_fold["train_canonical_objective"].mean(),
+        "mean_validation_best": best_by_fold["validation_canonical_objective"].mean(),
+        "mean_train_best_by_train": best_by_train["train_canonical_objective"].mean(),
+        "mean_validation_best_by_train": best_by_train["validation_canonical_objective"].mean(),
+        "mean_validation_good_start": good_start["validation_canonical_objective"].mean(),
+        "mean_validation_all_starts": fold_frame["validation_canonical_objective"].mean(),
         "within_fold_mean_path_distance": within_fold_path_distance(path_frame),
         "across_fold_best_path_distance": across_fold_best_path_distance(path_frame, best_by_fold),
         "mean_curvature_best": best_by_fold["curvature_penalty_value"].mean(),
@@ -487,7 +487,7 @@ def make_experiment_plots(
     plot_path = experiment_dir / "validation_by_fold_start.png"
     fig, ax = plt.subplots(figsize=(9.5, 5.5), constrained_layout=True)
     for start, group in fold_frame.groupby("start"):
-        ax.plot(group["fold"], group["validation_objective"], marker="o", label=start)
+        ax.plot(group["fold"], group["validation_canonical_objective"], marker="o", label=start)
     ax.set_title(f"{experiment.name}: validation performance")
     ax.set_ylabel("Validation objective")
     ax.grid(alpha=0.25)
@@ -519,7 +519,7 @@ def make_experiment_plots(
         plt.close(fig)
 
     best = (
-        fold_frame.sort_values(["fold", "validation_objective"], ascending=[True, False])
+        fold_frame.sort_values(["fold", "validation_canonical_objective"], ascending=[True, False])
         .groupby("fold", as_index=False)
         .head(1)
     )

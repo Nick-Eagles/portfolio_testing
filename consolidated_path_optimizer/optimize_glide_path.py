@@ -221,7 +221,7 @@ def regularized_objective_and_gradient(
     curvature_penalty: float,
     curvature_huber_delta: float,
 ) -> tuple[float, float, float, np.ndarray]:
-    raw_objective, raw_gradient, _ = objective_and_gradient(
+    canonical_objective, canonical_gradient, _ = objective_and_gradient(
         path_returns,
         weights,
         min_horizon=1,
@@ -231,10 +231,10 @@ def regularized_objective_and_gradient(
         weights,
         curvature_huber_delta,
     )
-    regularized_objective = raw_objective - curvature_penalty * penalty_value
-    regularized_gradient = raw_gradient - curvature_penalty * penalty_gradient
+    regularized_objective = canonical_objective - curvature_penalty * penalty_value
+    regularized_gradient = canonical_gradient - curvature_penalty * penalty_gradient
     return (
-        raw_objective,
+        canonical_objective,
         penalty_value,
         regularized_objective,
         regularized_gradient,
@@ -248,7 +248,7 @@ def regularized_objective_only(
     curvature_penalty: float,
     curvature_huber_delta: float,
 ) -> tuple[float, float, float]:
-    raw_objective, _, _ = objective_and_gradient(
+    canonical_objective, _, _ = objective_and_gradient(
         path_returns,
         weights,
         min_horizon=1,
@@ -258,8 +258,8 @@ def regularized_objective_only(
         weights,
         curvature_huber_delta,
     )
-    regularized_objective = raw_objective - curvature_penalty * penalty_value
-    return raw_objective, penalty_value, regularized_objective
+    regularized_objective = canonical_objective - curvature_penalty * penalty_value
+    return canonical_objective, penalty_value, regularized_objective
 
 
 def interpolate_control_points(control_points: dict[int, np.ndarray]) -> np.ndarray:
@@ -382,7 +382,9 @@ def load_endpoint_cache(
         return None
 
     summary = pd.read_csv(grid_cache)
-    required_columns = {*WEIGHT_COLUMNS, "objective"}
+    if "canonical_objective" not in summary.columns and "objective" in summary.columns:
+        summary = summary.rename(columns={"objective": "canonical_objective"})
+    required_columns = {*WEIGHT_COLUMNS, "canonical_objective"}
     if not required_columns.issubset(summary.columns):
         return None
     print(f"loaded cached horizon-50 endpoint search: {grid_cache}", flush=True)
@@ -413,7 +415,7 @@ def write_endpoint_cache(
 
 def select_best_endpoint(summary: pd.DataFrame) -> np.ndarray:
     selected = summary.sort_values(
-        ["objective", "stock_weight", "bond_weight", "t_bill_weight"],
+        ["canonical_objective", "stock_weight", "bond_weight", "t_bill_weight"],
         ascending=[False, False, False, False],
     ).iloc[0]
     return selected[WEIGHT_COLUMNS].to_numpy(dtype=float)
@@ -463,7 +465,7 @@ def select_horizon_50_endpoint(
         )
 
     summary = grid.copy()
-    summary["objective"] = np.concatenate(objective_chunks)
+    summary["canonical_objective"] = np.concatenate(objective_chunks)
     if use_cache:
         write_endpoint_cache(cache_dir, cache_settings, summary)
     return select_best_endpoint(summary), summary
@@ -509,11 +511,10 @@ def control_frame(control_points: dict[int, np.ndarray], iteration: int) -> pd.D
 def path_frame(
     control_points: dict[int, np.ndarray],
     iteration: int,
-    raw_objective: float,
+    canonical_objective: float,
     curvature_penalty_value: float,
     curvature_penalty_weight: float,
     regularized_objective: float,
-    canonical_objective: float,
     gradient_step: int,
 ) -> pd.DataFrame:
     frame = weights_to_frame(interpolate_control_points(control_points))
@@ -523,7 +524,6 @@ def path_frame(
     frame["curvature_penalty_term"] = curvature_penalty_weight * curvature_penalty_value
     frame["regularized_objective"] = regularized_objective
     frame["canonical_objective"] = canonical_objective
-    frame["objective"] = regularized_objective
     frame["is_control_point"] = frame["horizon"].isin(control_points)
     return frame
 
@@ -566,7 +566,7 @@ def optimize_control_points(
     for local_step in range(1, steps + 1):
         full_path = jacobian @ values
         (
-            raw_objective_before,
+            canonical_objective_before,
             curvature_penalty_before,
             regularized_objective_before,
             full_gradient,
@@ -608,17 +608,11 @@ def optimize_control_points(
 
         global_step += 1
         updated_full_path = jacobian @ values
-        updated_canonical_objective = path_objective(
-            path_returns,
-            updated_full_path,
-            asset_returns,
-            horizon_50_weight_ratio=horizon_50_weight_ratio,
-        )
         validation_regularized_objective = np.nan
         validation_canonical_objective = np.nan
         if validation_path_returns is not None:
             (
-                _validation_raw,
+                _validation_canonical,
                 _validation_penalty,
                 validation_regularized_objective,
             ) = regularized_objective_only(
@@ -628,14 +622,9 @@ def optimize_control_points(
                 curvature_penalty=curvature_penalty,
                 curvature_huber_delta=curvature_huber_delta,
             )
-            validation_canonical_objective = path_objective(
-                validation_path_returns,
-                updated_full_path,
-                asset_returns if validation_asset_returns is None else validation_asset_returns,
-                horizon_50_weight_ratio=horizon_50_weight_ratio,
-            )
+            validation_canonical_objective = _validation_canonical
         (
-            updated_raw_objective,
+            updated_canonical_objective,
             updated_curvature_penalty,
             updated_regularized_objective,
         ) = regularized_objective_only(
@@ -655,15 +644,12 @@ def optimize_control_points(
                     curvature_penalty * curvature_penalty_before
                 ),
                 "regularized_objective_before_step": regularized_objective_before,
-                "objective_before_step": regularized_objective_before,
                 "curvature_penalty_value": updated_curvature_penalty,
                 "curvature_penalty_term": curvature_penalty * updated_curvature_penalty,
                 "regularized_objective": updated_regularized_objective,
                 "canonical_objective": updated_canonical_objective,
-                "objective": updated_regularized_objective,
                 "validation_regularized_objective": validation_regularized_objective,
                 "validation_canonical_objective": validation_canonical_objective,
-                "validation_objective": validation_regularized_objective,
                 "control_point_count": len(control_horizons),
                 "curvature_penalty_weight": curvature_penalty,
                 "curvature_huber_delta": curvature_huber_delta,
@@ -775,7 +761,7 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
         )
         ax.text(
             int(group["global_step"].min()),
-            trace["objective"].min(),
+            trace["regularized_objective"].min(),
             f"iter {int(iteration)}",
             rotation=90,
             va="bottom",
@@ -815,7 +801,7 @@ def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
             ("endpoint_cache_dir", args.endpoint_cache_dir),
             ("endpoint_cache_version", ENDPOINT_CACHE_VERSION),
             (
-                "objective",
+                "regularized_objective",
                 "canonical worst-tail mean objective minus Huber curvature penalty",
             ),
             (
@@ -916,7 +902,7 @@ def run_single_optimization(
         control_points = {1: start_path[0], MAX_HORIZON: start_path[-1]}
         weights_to_frame(start_path).to_csv(start_paths_dir / f"{start_name}.csv", index=False)
         (
-            start_raw_objective,
+            start_canonical_objective,
             start_curvature_penalty,
             start_regularized_objective,
         ) = regularized_objective_only(
@@ -925,12 +911,6 @@ def run_single_optimization(
             horizon_50_weight_ratio=args.horizon_50_weight_ratio,
             curvature_penalty=args.curvature_penalty,
             curvature_huber_delta=args.curvature_huber_delta,
-        )
-        start_canonical_objective = path_objective(
-            path_returns,
-            start_path,
-            asset_returns,
-            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
         )
         print(
             f"{start_name}: start regularized={start_regularized_objective:.6f}, "
@@ -942,11 +922,10 @@ def run_single_optimization(
             path_frame(
                 control_points,
                 0,
-                start_raw_objective,
+                start_canonical_objective,
                 start_curvature_penalty,
                 args.curvature_penalty,
                 start_regularized_objective,
-                start_canonical_objective,
                 0,
             )
         ]
@@ -980,7 +959,7 @@ def run_single_optimization(
         trace_rows.extend(rows)
         current_path = interpolate_control_points(control_points)
         (
-            current_raw_objective,
+            current_canonical_objective,
             current_curvature_penalty,
             current_regularized_objective,
         ) = regularized_objective_only(
@@ -990,21 +969,14 @@ def run_single_optimization(
             curvature_penalty=args.curvature_penalty,
             curvature_huber_delta=args.curvature_huber_delta,
         )
-        current_canonical_objective = path_objective(
-            path_returns,
-            current_path,
-            asset_returns,
-            horizon_50_weight_ratio=args.horizon_50_weight_ratio,
-        )
         path_history = [
             path_frame(
                 control_points,
                 0,
-                current_raw_objective,
+                current_canonical_objective,
                 current_curvature_penalty,
                 args.curvature_penalty,
                 current_regularized_objective,
-                current_canonical_objective,
                 global_step,
             )
         ]
@@ -1044,7 +1016,7 @@ def run_single_optimization(
                 horizon_50_weight_ratio=args.horizon_50_weight_ratio,
             )
             (
-                current_raw_objective,
+                current_canonical_objective,
                 current_curvature_penalty,
                 current_regularized_objective,
             ) = regularized_objective_only(
@@ -1058,11 +1030,10 @@ def run_single_optimization(
                 path_frame(
                     control_points,
                     iteration,
-                    current_raw_objective,
+                    current_canonical_objective,
                     current_curvature_penalty,
                     args.curvature_penalty,
                     current_regularized_objective,
-                    current_canonical_objective,
                     global_step,
                 )
             )

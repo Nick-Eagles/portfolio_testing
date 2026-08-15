@@ -205,7 +205,7 @@ def plot_optimization_traces(traces_csv: Path, output_pdf: Path) -> None:
     fig, ax = plt.subplots(figsize=(9, 5.5), constrained_layout=True)
     x_column = "global_step" if "global_step" in traces.columns else "iteration"
     for name, group in traces.groupby("start"):
-        ax.plot(group[x_column], group["objective"], linewidth=1.4, label=name)
+        ax.plot(group[x_column], group["regularized_objective"], linewidth=1.4, label=name)
     ax.set_xlabel("Gradient step" if x_column == "global_step" else "Iteration")
     ax.set_ylabel("Simulation objective (mean worst-4% mean, horizons 1-50)")
     ax.set_title("Projected-gradient ascent traces by start")
@@ -219,9 +219,9 @@ def plot_validation_traces(traces_csv: Path, output_pdf: Path) -> None:
     if not traces_csv.exists():
         return
     traces = pd.read_csv(traces_csv)
-    if "validation_objective" not in traces.columns:
+    if "validation_regularized_objective" not in traces.columns:
         return
-    traces = traces.dropna(subset=["validation_objective"])
+    traces = traces.dropna(subset=["validation_regularized_objective"])
     if traces.empty:
         return
     fig, ax = plt.subplots(figsize=(9, 5.5), constrained_layout=True)
@@ -230,7 +230,7 @@ def plot_validation_traces(traces_csv: Path, output_pdf: Path) -> None:
     for name, group in groups:
         ax.plot(
             group[x_column],
-            group["validation_objective"],
+            group["validation_regularized_objective"],
             linewidth=1.4,
             label=name,
         )
@@ -379,7 +379,7 @@ def plot_out_of_sample(oos_csv: Path, output_pdf: Path) -> None:
     for name, group in oos.groupby("path_name"):
         ax.scatter(
             group["seed"].astype(str),
-            group["objective"],
+            group["canonical_objective"],
             color=PATH_COLORS.get(name, "gray"),
             s=45,
             label=name,
