@@ -34,15 +34,33 @@ Canonical output layout:
 
 The project still aims to recommend how someone should invest given how much time they have left, using only broad asset classes and preferring simple conclusions.
 
-There are now three distinct arms of the project:
+Historical framing: there were three distinct arms of the project:
 
-- The fixed-portfolio arm: older, more established, and currently the main baseline.
-- The glide path arm: newer and explicitly experimental.
-- The retirement arm: newest and explicitly experimental, combining accumulation, retirement withdrawals, and external glide-path comparisons.
+- The fixed-portfolio arm: older and once the main baseline.
+- The glide path arm: originally experimental, later developed through several
+  optimizer designs.
+- The retirement arm: originally experimental, combining accumulation,
+  retirement withdrawals, and external glide-path comparisons.
 
-The glide path work should not be described as settled, final, or clearly superior. It exists because the user wants to test whether a time-varying recommendation can answer the original question more directly than the fixed-portfolio workflow.
+Current framing as of August 2026: `consolidated_path_optimizer/` is the major
+current serious piece of the repository. It consolidates the modern full-path,
+bisection/control-point glide-path, and retirement optimizer work. The older
+first-level scripts and predecessor optimizer directories remain valuable lab
+history, but they are not the active workflow unless the user explicitly asks
+about them.
 
-The retirement arm is still a research arm, but the major annual-contribution issue has been resolved. Its current implementation is coherent enough to use for comparisons and minor follow-up tweaks.
+The glide path work should no longer be described as merely transient or
+hopelessly unstable. The project has converged much more effectively after the
+simplex-tangent Adam projection bug was fixed. At the same time, final claims
+should still be made carefully: the user wants validation-driven
+hyperparameter/algorithm choices, then a full-dataset run that becomes the
+final information product.
+
+The retirement arm remains important because the final story will likely
+compare optimized paths with Vanguard and Fidelity retirement glide paths. The
+major annual-contribution issue described later in these notes has been
+resolved, but the final repo cleanup may simplify how much of the older
+retirement history is presented.
 
 ## Documentation Maintenance
 
@@ -536,6 +554,185 @@ Experimental external comparison logic:
   plots `(value - same_age_mean) / same_age_mean` for each metric and starting
   age, making close path differences easier to see without the potentially
   misleading amplification of z-scores.
+
+## Consolidated Path Optimizer
+
+The current serious product of the repository is now
+`consolidated_path_optimizer/`. It was created to consolidate the modern pieces
+from `full_path_optimizer/`, `experimental_glide_path_optimizer/`, and
+`experimental_retirement_path_optimizer/` while leaving those older directories
+untouched as historical references.
+
+The consolidated directory has three invocation scripts corresponding to the
+three current algorithms:
+
+- `optimize_full_path.py`: direct full-path projected Adam over all 50 horizon
+  rows. This intentionally avoids bisection/control-point logic and exists as
+  an alternative to that style of parameterization.
+- `optimize_glide_path.py`: bisection/control-point projected Adam over the
+  1-50 year path. Integer horizons are evaluated by linear interpolation
+  between control points; gradients are computed on the full path and pulled
+  back through the interpolation Jacobian.
+- `optimize_retirement_path.py`: retirement accumulation optimizer for ages
+  20-65, assuming the post-retirement block already exists.
+
+There is also a unified gradient-check script:
+
+```bash
+uv run python consolidated_path_optimizer/check_gradients.py --algorithm glide
+```
+
+Use this directory for current work. First-level scripts and older optimizer
+directories are mostly lab history, although some first-level modules are still
+imported as helpers.
+
+### Consolidated Run Modes
+
+Each of the three consolidated algorithms supports three run modes:
+
+- `--run-mode full`: use the full 1927-onward dataset for optimization. This is
+  the mode intended to produce the final repository result after tuning.
+- `--run-mode bootstrap-cv`: generate bootstrapped paths as usual, then split
+  simulated paths into 5 training/validation folds.
+- `--run-mode year-cv`: split the actual historical years into circular
+  contiguous train/validation blocks. Recent work uses a 60/40 split with five
+  linearly spaced starts around the circular historical dataset.
+
+`year-cv` is currently the preferred way to tune hyperparameters and algorithm
+choices. It is not expected to produce the final answer; it is meant to choose
+reasonable hyperparameters without peeking only at the full real dataset. Once
+hyperparameters and algorithm choice are settled, the final information product
+should come from a full-dataset run.
+
+### Important Consolidation Choices
+
+For the two non-retirement algorithms, the current default design is:
+
+- Always run the `good_start` path.
+- Optionally run random endpoint-interpolated starts; random starts can be set
+  to 0, in which case `good_start` still runs.
+- Initialize `good_start` from the empirical horizon-1 optimum plus a cached
+  horizon-50 endpoint search.
+- Treat horizon 1 as special only for initialization. It must then be optimized
+  like the other horizons.
+- Use endpoint search caching inside the new consolidated directory.
+
+For `optimize_full_path.py`, do not add bisection/control-point logic. Its
+purpose is to provide a direct full-path alternative.
+
+For `optimize_glide_path.py`, the bisection algorithm always runs gradient
+steps before the first bisection as well as after each later bisection. There
+is one `--gradient-steps` concept rather than separate pre-bisection and
+post-bisection step counts.
+
+For the retirement optimizer, the external comparison logic from the
+experimental retirement branch was folded into the normal workflow after
+optimization. In CV modes, do not perform the external retirement comparison.
+
+### Objective Naming Cleanup
+
+Older code and logs sometimes used "raw" and "canonical" in confusing ways.
+The conceptual distinction should now be only:
+
+- `canonical_objective`: the weighted unregularized objective.
+- `regularized_objective`: the canonical objective after subtracting any
+  regularization penalty.
+
+Avoid reintroducing "raw" as a third objective concept.
+
+### Simplex-Tangent Projection
+
+Gradient-based simplex updates must project gradients onto the simplex tangent
+before Adam moments and again after Adam's per-coordinate scaling. Earlier
+convergence instability was primarily caused by missing this projection in the
+Adam implementation. After fixing that, convergence issues largely
+disappeared. Do not frame the current objective as inherently suspect because
+of old convergence notes; the known Adam projection bug explains much of the
+old behavior.
+
+## Recent Hyperparameter Tuning
+
+Recent tuning has focused on the bisection/control-point glide-path optimizer
+with `year-cv`.
+
+The most important current methodological point is that hyperparameters are
+being chosen by a combined validation-plus-similarity criterion rather than
+validation objective alone. Validation objective is necessary, but by itself it
+can reward paths that are less stable or less plausible. The current score is:
+
+`validation_progress + 2 * similarity_progress`
+
+where:
+
+- validation progress is normalized against the baseline good-start to
+  optimized validation improvement;
+- similarity progress uses mean pairwise distance among final paths across
+  `year-cv` folds, with lower distance better;
+- the bad similarity anchor is within-fold dispersion among initial/random
+  start paths;
+- the good similarity anchor is the baseline optimized across-fold distance;
+- similarity receives twice the weight of validation because stable,
+  believable paths matter for the final story.
+
+Recent one-off tuning outputs live in `consolidated_path_optimizer/tuning/`.
+The useful directories are:
+
+- `metric_screening_h1/`: reran an early metric screen with
+  `--horizon-50-weight-ratio 1.0`. This confirmed that ratio 1.0 made the
+  good-start path improve validation after optimization.
+- `metric_screening_smooth06_weighted/`: centered around smoothing strength
+  `0.6`, introduced the 2x similarity score, and included perturbations for
+  smoothing, curvature, bisections, gradient steps, and learning rate.
+- `metric_screening_final_baseline/`: tested smoothing `0.8`, curvature
+  `0.0005`, `20` gradient steps, and `--early-stop`. This made `--early-stop`
+  look too aggressive.
+- `metric_screening_final_baseline_no_early_stop/`: reran the same final
+  screen with early stop disabled. This was substantially healthier.
+
+Key tuning takeaways so far:
+
+- `--horizon-50-weight-ratio 1.0` looks much better than very low values such
+  as `0.001`. Very low values can make conservative random starts look
+  deceptively good on validation because even slightly aggressive portfolios
+  are penalized too heavily.
+- Smoothing strength around `0.8` to `0.9` looks promising.
+- Curvature penalty around `0.00025` to `0.0005` looks promising, with
+  curvature `0` as a validation-heavy but less regularized alternative.
+- `20` gradient steps looked better than the earlier `10`-step baseline in
+  the weighted metric.
+- `--early-stop` should be off for now. On-disk evidence suggests it stops the
+  optimizer far too early in the 20-step screens and worsens both validation
+  and across-fold similarity in the matched-ish comparison.
+- Extra bisections (`5` or `6`) scored very well under the scalar metric, but
+  also produced very high curvature diagnostics. Treat that as a warning that
+  the scalar score does not fully capture path plausibility.
+
+The current likely good neighborhood is therefore:
+
+- `--horizon-50-weight-ratio 1.0`
+- no `--early-stop`
+- smoothing strength around `0.8` to `0.9`
+- curvature penalty around `0.00025` to `0.0005`
+- `20` gradient steps
+- `4` bisections as the conservative/plausible center, with `5` bisections
+  worth considering only after inspecting path shapes and curvature.
+
+This is not yet a formal proof of a local maximum. It is a strong practical
+screening result. The next rigorous step would be a more formal perturbation
+analysis around the chosen baseline, with the validation/similarity score and
+path-shape diagnostics reported together.
+
+## Near-Term Plan
+
+The user's next major plans are:
+
+1. Finish selecting good hyperparameters and algorithm choices using `year-cv`.
+2. Run the chosen hyperparameters on the full 1927-onward dataset.
+3. Validate the resulting full-dataset paths against Vanguard and Fidelity
+   retirement glide paths.
+4. Clean up the repository so it tells a clear and concise story about what was
+   done, why the validation process was reasonable, and why the final results
+   are trustworthy.
 
 ## Interpretation Notes
 

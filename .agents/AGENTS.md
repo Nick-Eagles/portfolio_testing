@@ -105,14 +105,27 @@ Each optimizer supports three run modes:
   algorithm choice are selected.
 - `--run-mode bootstrap-cv`: 5-fold CV by generating bootstrap paths normally
   and splitting simulated paths into training/validation folds.
-- `--run-mode year-cv`: 5-fold CV by splitting actual years into contiguous
-  periods, bootstrapping training paths only within the four training periods
-  and validation paths only within the held-out period.
+- `--run-mode year-cv`: 5-fold CV by choosing contiguous circular training
+  blocks over actual historical years, with validation using the remaining
+  contiguous block. Recent tuning has used a 60/40 train/validation split.
 
-Use CV modes to tune hyperparameters, regularization, smoothing, and algorithm
-selection. Use the full-dataset run for the final information product.
-`--early-stop` uses the full objective in `full` mode and validation objective
-in CV modes.
+Use `year-cv` as the primary way to tune hyperparameters, regularization,
+smoothing, and algorithm selection before the final full-dataset run.
+`bootstrap-cv` exists but has been less central to recent work. Use the
+full-dataset run for the final information product once hyperparameters are
+chosen.
+
+Recent tuning has used a combined validation-plus-similarity score: validation
+performance measures the held-out objective, while path similarity measures
+mean pairwise distance among final paths across `year-cv` folds. The current
+working score weights similarity twice as heavily as validation:
+`validation_progress + 2 * similarity_progress`. This score has been important
+for avoiding hyperparameters that improve validation while producing less
+believable or less stable glide paths.
+
+`--early-stop` remains available, but recent matched-ish screens made it look
+too aggressive for the current bisection/glide-path tuning. Do not assume it
+belongs in the final baseline unless the user asks to revisit it.
 
 Gradient-based simplex updates must project gradients onto the simplex tangent
 before Adam moments and again after Adam's per-coordinate scaling. Earlier
@@ -152,6 +165,15 @@ they are not active workflow entry points:
 
 Do not over-interpret one optimal point when nearby portfolios perform
 similarly.
+
+The project is now close to final hyperparameter choices. The user's likely
+next major steps are:
+
+- run the selected good hyperparameters on the full 1927-onward dataset;
+- validate the resulting retirement/glide paths against Vanguard and Fidelity
+  glide paths;
+- clean up the repo so it tells a concise, trustworthy story about the methods,
+  validation process, and final results.
 
 The user especially cares about:
 
