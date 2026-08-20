@@ -38,7 +38,8 @@ from simulate_returns import (
 )
 
 
-OUTPUT_DIR = SCRIPT_DIR
+OUTPUT_DIR = PROJECT_ROOT / "outputs" / "retirement_path"
+PLOT_DIR = PROJECT_ROOT / "plots" / "retirement_path"
 APPROACH_COLORS = {
     "Ours": "#111111",
     "Vanguard": "#1f77b4",
@@ -100,7 +101,13 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=OUTPUT_DIR,
-        help="Directory for comparison plots and CSVs.",
+        help="Directory for comparison CSVs.",
+    )
+    parser.add_argument(
+        "--plot-dir",
+        type=Path,
+        default=PLOT_DIR,
+        help="Directory for comparison plots.",
     )
     return parser.parse_args()
 
@@ -528,17 +535,19 @@ def write_outputs(
     post_retirement: pd.DataFrame,
     random_paths: dict[str, pd.DataFrame],
     output_dir: Path,
+    plot_dir: Path,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
     pre_csv = output_dir / "retirement_comparison_pre_retirement_metrics.csv"
     post_csv = output_dir / "retirement_comparison_post_retirement_metrics.csv"
     pre_retirement.to_csv(pre_csv, index=False)
     post_retirement.to_csv(post_csv, index=False)
     print(f"Wrote {display_path(pre_csv)}")
     print(f"Wrote {display_path(post_csv)}")
-    plot_pre_retirement_worst_4pct(pre_retirement, output_dir)
-    plot_post_retirement_metrics(post_retirement, output_dir)
-    plot_random_paths(random_paths, output_dir)
+    plot_pre_retirement_worst_4pct(pre_retirement, plot_dir)
+    plot_post_retirement_metrics(post_retirement, plot_dir)
+    plot_random_paths(random_paths, plot_dir)
 
 
 def plot_post_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
@@ -648,6 +657,7 @@ def main() -> None:
         post_retirement=post_retirement,
         random_paths=random_paths,
         output_dir=args.output_dir,
+        plot_dir=args.plot_dir,
     )
 
 

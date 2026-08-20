@@ -146,12 +146,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=SCRIPT_DIR / "outputs",
+        default=SCRIPT_DIR / "outputs" / "full_path",
     )
     parser.add_argument(
         "--plot-dir",
         type=Path,
-        default=SCRIPT_DIR / "plots" / "gradient_ascent",
+        default=SCRIPT_DIR / "plots" / "full_path",
     )
     return parser.parse_args()
 
@@ -613,6 +613,8 @@ def run_cross_validation(args: argparse.Namespace) -> None:
         year_cv_train_fraction=args.year_cv_train_fraction,
     )
     rows = []
+    cv_output_dir = args.output_dir / "CV"
+    cv_plot_dir = args.plot_dir / "CV"
     for fold in folds:
         print(f"\n{fold.name}: running {args.run_mode}", flush=True)
         rows.append(
@@ -620,15 +622,16 @@ def run_cross_validation(args: argparse.Namespace) -> None:
                 args=args,
                 path_returns=fold.train_path_returns,
                 asset_returns=fold.train_asset_returns,
-                output_dir=args.output_dir / fold.name,
-                plot_dir=args.plot_dir / fold.name,
+                output_dir=cv_output_dir / fold.name,
+                plot_dir=cv_plot_dir / fold.name,
                 validation_path_returns=fold.validation_path_returns,
                 validation_asset_returns=fold.validation_asset_returns,
                 fold_name=fold.name,
             )
         )
     summary = pd.DataFrame(rows)
-    summary.to_csv(args.output_dir / "cross_validation_summary.csv", index=False)
+    cv_output_dir.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(cv_output_dir / "cross_validation_summary.csv", index=False)
     print(
         "\nCV mean training performance: "
         f"{summary['training_performance'].mean():.6f}"

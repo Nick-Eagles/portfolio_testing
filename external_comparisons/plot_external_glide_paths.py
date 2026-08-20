@@ -6,6 +6,8 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
+PLOT_DIR = PROJECT_ROOT / "plots" / "retirement_path"
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,7 +53,7 @@ def display_name(csv_path: Path) -> str:
 
 
 def get_output_pdf(csv_path: Path) -> Path:
-    return csv_path.with_suffix(".pdf")
+    return PLOT_DIR / f"{csv_path.stem}.pdf"
 
 
 def plot_path(path: pd.DataFrame, output_pdf: Path, label: str) -> None:

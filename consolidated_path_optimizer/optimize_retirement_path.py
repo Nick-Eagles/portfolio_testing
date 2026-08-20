@@ -139,12 +139,17 @@ def parse_args() -> argparse.Namespace:
         default=SCRIPT_DIR / "cache" / "endpoint_search",
     )
     parser.add_argument("--no-endpoint-cache", action="store_true")
-    parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "outputs")
-    parser.add_argument("--plot-dir", type=Path, default=SCRIPT_DIR / "plots")
+    parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "outputs" / "retirement_path")
+    parser.add_argument("--plot-dir", type=Path, default=SCRIPT_DIR / "plots" / "retirement_path")
     parser.add_argument(
         "--comparison-output-dir",
         type=Path,
-        default=SCRIPT_DIR / "external_comparison_outputs",
+        default=SCRIPT_DIR / "outputs" / "retirement_path" / "external_comparison",
+    )
+    parser.add_argument(
+        "--comparison-plot-dir",
+        type=Path,
+        default=SCRIPT_DIR / "plots" / "retirement_path" / "external_comparison",
     )
     parser.add_argument("--comparison-random-paths", type=int, default=3)
     parser.add_argument("--skip-external-comparison", action="store_true")
@@ -944,7 +949,7 @@ def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
     plt.close(fig)
 
 
-def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
+def plot_optimization_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
     fig, ax = plt.subplots(figsize=(10.5, 5.8), constrained_layout=True)
     ax.plot(
         trace["global_step"],
@@ -967,7 +972,6 @@ def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
 
 
 def plot_contribution_scales(scales: pd.DataFrame, output_pdf: Path) -> None:
-    output_png = output_pdf.with_suffix(".png")
     fig, ax = plt.subplots(figsize=(10.5, 5.8), constrained_layout=True)
     ax.plot(
         scales["starting_age"],
@@ -997,7 +1001,6 @@ def plot_contribution_scales(scales: pd.DataFrame, output_pdf: Path) -> None:
     ax.set_xticks(list(range(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1, 5)))
     ax.grid(alpha=0.25)
     fig.savefig(output_pdf)
-    fig.savefig(output_png, dpi=180)
     plt.close(fig)
 
 
@@ -1263,13 +1266,16 @@ def run_single_optimization(
     path_history_frame.to_csv(output_dir / "path_history.csv", index=False)
     control_history_frame.to_csv(output_dir / "control_history.csv", index=False)
     if not trace.empty:
-        trace.to_csv(output_dir / "objective_trace.csv", index=False)
+        trace.to_csv(output_dir / "optimization_traces.csv", index=False)
     write_metadata(args, output_dir, retirement_path)
     plot_contribution_scales(scales, plot_dir / "contribution_start_constants_by_age.pdf")
     plot_iteration_paths(path_history_frame, plot_dir / "path_iterations.pdf")
     if not trace.empty:
-        plot_objective_trace(trace, plot_dir / "objective_trace.pdf")
-        plot_validation_traces(output_dir / "objective_trace.csv", plot_dir / "validation_objective_trace.pdf")
+        plot_optimization_trace(trace, plot_dir / "optimization_traces.pdf")
+        plot_validation_traces(
+            output_dir / "optimization_traces.csv",
+            plot_dir / "validation_optimization_traces.pdf",
+        )
     print(f"wrote {output_dir / 'final_path.csv'}")
     print(f"wrote {plot_dir / 'path_iterations.pdf'}")
     final_weights = final_path[final_path["starting_age"].between(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE)][WEIGHT_COLUMNS].to_numpy(dtype=float)
@@ -1317,6 +1323,8 @@ def run_external_comparison(args: argparse.Namespace) -> None:
             str(args.output_dir),
             "--output-dir",
             str(args.comparison_output_dir),
+            "--plot-dir",
+            str(args.comparison_plot_dir),
             "--random-paths",
             str(args.comparison_random_paths),
         ]
@@ -1336,20 +1344,23 @@ def run_cross_validation(args: argparse.Namespace) -> None:
         year_cv_train_fraction=args.year_cv_train_fraction,
     )
     rows = []
+    cv_output_dir = args.output_dir / "CV"
+    cv_plot_dir = args.plot_dir / "CV"
     for fold in folds:
         print(f"\n{fold.name}: running {args.run_mode}", flush=True)
         rows.append(
             run_single_optimization(
                 args=args,
                 path_returns=fold.train_path_returns,
-                output_dir=args.output_dir / fold.name,
-                plot_dir=args.plot_dir / fold.name,
+                output_dir=cv_output_dir / fold.name,
+                plot_dir=cv_plot_dir / fold.name,
                 validation_path_returns=fold.validation_path_returns,
                 fold_name=fold.name,
             )
         )
     summary = pd.DataFrame(rows)
-    summary.to_csv(args.output_dir / "cross_validation_summary.csv", index=False)
+    cv_output_dir.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(cv_output_dir / "cross_validation_summary.csv", index=False)
     print(
         "\nCV mean training performance: "
         f"{summary['training_performance'].mean():.6f}"

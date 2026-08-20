@@ -78,13 +78,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=SCRIPT_DIR / "outputs",
+        default=SCRIPT_DIR / "outputs" / "retirement_path",
         help="Directory containing final_path.csv and contribution_scales.csv.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=SCRIPT_DIR / "external_comparison_outputs",
+        default=SCRIPT_DIR / "outputs" / "retirement_path" / "external_comparison",
+    )
+    parser.add_argument(
+        "--plot-dir",
+        type=Path,
+        default=SCRIPT_DIR / "plots" / "retirement_path" / "external_comparison",
     )
     parser.add_argument("--random-paths", type=int, default=3)
     return parser.parse_args()
@@ -497,18 +502,20 @@ def write_outputs(
     post_retirement: pd.DataFrame,
     random_paths: dict[str, pd.DataFrame],
     output_dir: Path,
+    plot_dir: Path,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
     pre_csv = output_dir / "experimental_comparison_pre_retirement_metrics.csv"
     post_csv = output_dir / "experimental_comparison_post_retirement_metrics.csv"
     pre_retirement.to_csv(pre_csv, index=False)
     post_retirement.to_csv(post_csv, index=False)
     print(f"Wrote {display_path(pre_csv)}")
     print(f"Wrote {display_path(post_csv)}")
-    plot_pre_retirement_metrics(pre_retirement, output_dir)
-    plot_pre_retirement_age_relative_means(pre_retirement, output_dir)
-    plot_post_retirement_metrics(post_retirement, output_dir)
-    plot_random_paths(random_paths, output_dir)
+    plot_pre_retirement_metrics(pre_retirement, plot_dir)
+    plot_pre_retirement_age_relative_means(pre_retirement, plot_dir)
+    plot_post_retirement_metrics(post_retirement, plot_dir)
+    plot_random_paths(random_paths, plot_dir)
 
 
 def main() -> None:
@@ -570,6 +577,7 @@ def main() -> None:
         post_retirement=post_retirement,
         random_paths=random_paths,
         output_dir=args.output_dir,
+        plot_dir=args.plot_dir,
     )
 
 

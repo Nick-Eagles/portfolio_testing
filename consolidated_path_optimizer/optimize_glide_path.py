@@ -182,12 +182,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=SCRIPT_DIR / "outputs",
+        default=SCRIPT_DIR / "outputs" / "glide_path",
     )
     parser.add_argument(
         "--plot-dir",
         type=Path,
-        default=SCRIPT_DIR / "plots",
+        default=SCRIPT_DIR / "plots" / "glide_path",
     )
     return parser.parse_args()
 
@@ -733,51 +733,6 @@ def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
     plt.close(fig)
 
 
-def plot_objective_trace(trace: pd.DataFrame, output_pdf: Path) -> None:
-    fig, ax = plt.subplots(figsize=(10.5, 5.8), constrained_layout=True)
-    ax.plot(
-        trace["global_step"],
-        trace["regularized_objective"],
-        color="black",
-        linewidth=1.7,
-        marker="o",
-        markersize=2.5,
-        label="Regularized objective",
-    )
-    ax.plot(
-        trace["global_step"],
-        trace["canonical_objective"],
-        color="#1f77b4",
-        linewidth=1.2,
-        linestyle=":",
-        label="Canonical objective",
-    )
-    for iteration, group in trace.groupby("iteration"):
-        ax.axvline(
-            int(group["global_step"].min()),
-            color="#777777",
-            linewidth=0.8,
-            alpha=0.35,
-        )
-        ax.text(
-            int(group["global_step"].min()),
-            trace["regularized_objective"].min(),
-            f"iter {int(iteration)}",
-            rotation=90,
-            va="bottom",
-            ha="right",
-            fontsize=8,
-            color="#555555",
-        )
-    ax.set_title("Objective at Every Gradient Step")
-    ax.set_xlabel("Gradient step")
-    ax.set_ylabel("Objective (weighted mean worst-4% mean, horizons 1-50)")
-    ax.legend()
-    ax.grid(alpha=0.25)
-    fig.savefig(output_pdf)
-    plt.close(fig)
-
-
 def write_metadata(args: argparse.Namespace, output_dir: Path) -> None:
     metadata = pd.DataFrame(
         [
@@ -1109,9 +1064,6 @@ def run_single_optimization(
             output_dir / "optimization_traces.csv",
             index=False,
         )
-    if best_trace is not None and not best_trace.empty:
-        best_trace.to_csv(output_dir / "objective_trace.csv", index=False)
-
     write_metadata(args, output_dir)
     plot_end_paths(
         start_paths_dir,
@@ -1131,14 +1083,10 @@ def run_single_optimization(
     if good_trajectory.exists():
         plot_gradient_snapshots(good_trajectory, plot_dir / "good_start_path_snapshots.pdf")
     plot_iteration_paths(best_path_history_frame, plot_dir / "path_iterations.pdf")
-    if best_trace is not None and not best_trace.empty:
-        plot_objective_trace(best_trace, plot_dir / "objective_trace.pdf")
 
     print(f"best start: {best_name}, canonical objective {best_score:.6f}")
     print(f"wrote {output_dir / 'final_path.csv'}")
     print(f"wrote {plot_dir / 'path_iterations.pdf'}")
-    if best_trace is not None and not best_trace.empty:
-        print(f"wrote {plot_dir / 'objective_trace.pdf'}")
     best_weights = final_path[WEIGHT_COLUMNS].to_numpy(dtype=float)
     return {
         "fold": fold_name or "full",
@@ -1171,6 +1119,8 @@ def run_cross_validation(args: argparse.Namespace) -> None:
         year_cv_train_fraction=args.year_cv_train_fraction,
     )
     rows = []
+    cv_output_dir = args.output_dir / "CV"
+    cv_plot_dir = args.plot_dir / "CV"
     for fold in folds:
         print(f"\n{fold.name}: running {args.run_mode}", flush=True)
         rows.append(
@@ -1178,15 +1128,16 @@ def run_cross_validation(args: argparse.Namespace) -> None:
                 args=args,
                 path_returns=fold.train_path_returns,
                 asset_returns=fold.train_asset_returns,
-                output_dir=args.output_dir / fold.name,
-                plot_dir=args.plot_dir / fold.name,
+                output_dir=cv_output_dir / fold.name,
+                plot_dir=cv_plot_dir / fold.name,
                 validation_path_returns=fold.validation_path_returns,
                 validation_asset_returns=fold.validation_asset_returns,
                 fold_name=fold.name,
             )
         )
     summary = pd.DataFrame(rows)
-    summary.to_csv(args.output_dir / "cross_validation_summary.csv", index=False)
+    cv_output_dir.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(cv_output_dir / "cross_validation_summary.csv", index=False)
     print(
         "\nCV mean training performance: "
         f"{summary['training_performance'].mean():.6f}"
