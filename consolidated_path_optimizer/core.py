@@ -183,16 +183,17 @@ def objective_and_gradient(
     path_returns: np.ndarray,
     weights: np.ndarray,
     tail_fraction: float = WORST_TAIL_FRACTION,
-    min_horizon: int = 2,
+    min_horizon: int = 1,
     horizon_50_weight_ratio: float = DEFAULT_HORIZON_50_WEIGHT_RATIO,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     """Simulation-only objective and its subgradient with respect to weights.
 
     Returns (objective, gradient, per_horizon_scores). The objective is the
     weighted mean across horizons `min_horizon..max_horizon` of the per-horizon
-    worst-tail means (horizon 1 is normally anchored/fixed, so it is excluded
-    by default). The gradient has shape (max_horizon, 3); rows for horizons
-    below `min_horizon` are only reached through longer-horizon terms.
+    worst-tail means; by default this includes horizon 1. The gradient has
+    shape (max_horizon, 3); rows for horizons below `min_horizon` are only
+    reached through longer-horizon terms when callers explicitly raise
+    `min_horizon`.
     """
     num_sims, max_horizon, _ = path_returns.shape
     tail_count = max(1, int(np.ceil(num_sims * tail_fraction)))
