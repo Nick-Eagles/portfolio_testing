@@ -224,20 +224,22 @@ The bisected optimizer is still experimental and may not be the final algorithm.
 ### Full-Path Glide Path Optimizer
 
 A newer `full_path_optimizer/` arm was added after the greedy and bisected
-glide-path work. This is now a substantial alternate approach rather than just a
-small variant.
+glide-path work. Treat this as lab history, not an active workflow. The
+important full-path machinery was later absorbed into
+`consolidated_path_optimizer/`, where it served as a validation baseline and
+diagnostic comparator rather than the final recommended approach.
 
 High-level idea:
 
 - Freeze a shared set of bootstrap paths first, so the path objective becomes a
   deterministic, piecewise-smooth function of the full 50x3 weight matrix.
 - Optimize the entire path at once using projected gradient ascent over horizons
-  1 through 50. Horizon 1 used to be anchored to the exact empirical one-year
-  downside optimum, but the current gradient-optimizer branch treats it as an
-  optimizable row.
-- Optionally apply convex smoothing between gradient-ascent iterations.
-- Coordinate polishing over nearby 2% grid portfolios still exists, but should
-  be treated skeptically rather than as the default "final improvement" step.
+  1 through 50.
+- At the time, with help from Claude Fable, the goal was to use the full dataset
+  and decisively demonstrate convergence to the global maximum of the stated
+  objective. The work included multi-start gradient ascent, coordinate-ascent
+  polishing/certification ideas, path perturbation checks, and fresh-seed
+  bootstrap comparisons.
 
 Why gradient ascent is plausible here:
 
@@ -249,67 +251,28 @@ Why gradient ascent is plausible here:
   has a simple CVaR-style subgradient: average the outcome gradients over the
   current worst-tail simulations.
 
-Recent implementation changes:
+What we learned:
 
-- `full_path_optimizer/grid_certificate.py` has shifted away from being a final
-  exhaustive certificate script.
-- Its core behavior is now local coordinate polishing. The old `--polish` flag
-  was dropped; polishing always runs.
-- The final full-grid certificate sweep after polishing was dropped.
-- Polishing only checks candidate replacements within Euclidean portfolio-space
-  distance `0.25` by default.
-- A polishing run stops after a full horizon sweep when the total accepted
-  objective gain is less than `10 * improvement_tolerance`.
-- Full-path plots are stage-owned instead of produced by a final global plotting
-  script: baseline plots go to `full_path_optimizer/plots/baseline/`, gradient
-  diagnostics to `plots/gradient_ascent/`, coordinate-polish/final-path plots to
-  `plots/coordinate_ascent/`, and validation plots to `plots/validation/`.
-- Gradient-ascent plots now include faceted `end_paths.pdf` and
-  `best_path_snapshots.pdf`; simplex plots mark horizon multiples of 10 with a
-  viridis scale.
-- `optimize.py --smooth --smoothing-strength ...` applies an experimental
-  convex horizon smoother between gradient steps. It smooths the stock curve
-  first, rescales bonds/T-bills proportionally, then smooths the bond curve and
-  adjusts T-bills.
-- Random starts in `full_path_optimizer/optimize.py` now use random horizon-1
-  and horizon-50 endpoints with linear interpolation between them, rather than
-  drawing all 50 horizon rows independently. This makes random-start comparison
-  more comparable to the bisection/control-point setup.
-- Gradient ascent now projects each row's gradient into the simplex tangent
-  space before Adam moments, and projects the final Adam direction into the
-  tangent space again after Adam's coordinate-wise scaling. The normal
-  component should not influence moments, update directions, or coordinate
-  moves.
-
-Important caution:
-
-- Recent experiments increased concern that coordinate ascent/polishing may
-  hyper-fit limited historical data and produce less plausible paths than the
-  gradient-ascent outputs, even when it improves the in-sample objective.
-- Convex smoothing between gradient-ascent steps looked more promising: it made
-  final paths and objective scores more similar across starting paths, making
-  the landscape look more convex/stable.
-- A one-off smoothing of the already-polished path showed that much of the
-  jaggedness has tiny objective value: smoothing strength `0.25` worsened the
-  canonical objective by about `2.4e-5`, and strength `0.5` by about `6.9e-5`.
-- Leave-one-historical-chunk-out block bootstrapping and uneven horizon
-  objective weights were tried as robustness/regularization ideas but were not
-  convincing and were reverted.
-- A temporary 70-horizon smoothed optimization was also tried to see whether
-  stocks eventually dominate at long enough horizons; it still plateaued around
-  58-60% stocks near horizons 50-70, so this did not support the "stocks should
-  eventually dominate" intuition under that setup.
-- The main current concern is variability in the maxima found by gradient
-  ascent across starts. Future work should prioritize better initialization,
-  multi-start design, or lower-dimensional smooth path parameterizations before
-  spending more effort on coordinate polishing.
-- Some generated output files may reflect interrupted exploratory runs. When in
-  doubt, rerun from `outputs/gradient_path.csv` with the current script and
-  inspect the diagnostic CSVs.
-
-Detailed rationale, results, and validation live in
-`full_path_optimizer/NOTES.md`; prefer updating that file for full-path-specific
-details rather than expanding `AGENTS.md`.
+- The old full-path work convincingly demonstrated convergence in its own
+  training-objective space. That was useful technically, because it validated
+  the common-random-number objective and analytic-gradient implementation.
+- The fundamental flaw was that this was still essentially training
+  performance on one historical/bootstrap setup. Even if the optimizer found a
+  near-global maximum of that objective, the result could be heavily overfit,
+  and there was no convincing proof that the final recommended glide path would
+  generalize well.
+- The coordinate-ascent polishing/certification and path-perturbation checks
+  were best suited to showing that the path was hard to improve on the training
+  objective. They did not make much sense under the later training/validation
+  framing, where the goal is not to fit the in-sample objective as tightly as
+  possible but to choose a stable, interpretable path that performs well on
+  held-out historical regimes.
+- The later consolidated tuning runs therefore used full-path optimization only
+  as a comparison point. The full-path optimizer could score well on validation
+  for some starts, but selected paths were highly initialization-sensitive. The
+  final non-retirement recommendation should instead be based on the
+  consolidated bisection/control-point glide optimizer and its validation-driven
+  hyperparameter choice.
 
 ### Experimental Bisection + Gradient Control-Point Optimizer
 
