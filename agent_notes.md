@@ -277,6 +277,13 @@ What we learned:
 ### Experimental Bisection + Gradient Control-Point Optimizer
 
 A new research branch was added in `experimental_glide_path_optimizer/`.
+This directory should now be treated as lab history. It was the bridge from the
+standalone full-path optimizer to the consolidated bisection/control-point
+glide optimizer: it proved that piecewise-linear control points, endpoint
+search, projected Adam updates, curvature regularization, and optional
+smoothing could live in one coherent path-level optimizer. The active and
+validation-backed version of this work now lives in
+`consolidated_path_optimizer/optimize_glide_path.py`.
 
 This branch combines ideas from the bisection optimizer and the full-path
 gradient optimizer:
