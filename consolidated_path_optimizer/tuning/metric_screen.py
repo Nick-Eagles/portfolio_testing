@@ -32,12 +32,12 @@ from cv import make_cv_folds
 class Experiment:
     name: str
     changed: str = "baseline"
-    curvature_penalty: float = 0.0005
+    curvature_penalty: float = core.DEFAULT_CURVATURE_PENALTY
     smooth: bool = True
-    smoothing_strength: float = 0.8
-    bisections: int = 4
-    gradient_steps: int = 20
-    learning_rate: float = 0.04
+    smoothing_strength: float = core.DEFAULT_SMOOTHING_STRENGTH
+    bisections: int = core.DEFAULT_BISECTIONS
+    gradient_steps: int = core.DEFAULT_GRADIENT_STEPS
+    learning_rate: float = core.DEFAULT_LEARNING_RATE
     early_stop: bool = False
     smoothing_bandwidth: float = core.DEFAULT_SMOOTHING_BANDWIDTH
     curvature_huber_delta: float = core.DEFAULT_CURVATURE_HUBER_DELTA
@@ -52,34 +52,75 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--year-cv-train-fraction", type=float, default=0.6)
     parser.add_argument("--endpoint-grid-step", type=float, default=0.05)
     parser.add_argument("--endpoint-chunk-size", type=int, default=16)
-    parser.add_argument("--horizon-50-weight-ratio", type=float, default=core.DEFAULT_HORIZON_50_WEIGHT_RATIO)
+    parser.add_argument("--horizon-50-weight-ratio", type=float, default=1.0)
     parser.add_argument("--random-starts", type=int, default=core.DEFAULT_RANDOM_STARTS)
     parser.add_argument("--start-seed", type=int, default=core.DEFAULT_START_SEED)
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=SCRIPT_DIR / "metric_screening_final_baseline_no_early_stop",
+        default=SCRIPT_DIR / "metric_screening",
     )
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
 
 def experiment_suite() -> list[Experiment]:
-    return [
+    experiments = [
         Experiment("baseline"),
         Experiment("curvature_0", changed="curvature = 0", curvature_penalty=0.0),
-        Experiment("curvature_00025", changed="curvature = 0.00025", curvature_penalty=0.00025),
+        Experiment("curvature_0005", changed="curvature = 0.0005", curvature_penalty=0.0005),
         Experiment("curvature_00075", changed="curvature = 0.00075", curvature_penalty=0.00075),
         Experiment("curvature_001", changed="curvature = 0.001", curvature_penalty=0.001),
-        Experiment("curvature_0015", changed="curvature = 0.0015", curvature_penalty=0.0015),
+        Experiment("smooth_false", changed="smooth = false", smooth=False),
         Experiment("smooth_06", changed="smoothing = 0.6", smoothing_strength=0.6),
-        Experiment("smooth_07", changed="smoothing = 0.7", smoothing_strength=0.7),
-        Experiment("smooth_09", changed="smoothing = 0.9", smoothing_strength=0.9),
+        Experiment("smooth_08", changed="smoothing = 0.8", smoothing_strength=0.8),
         Experiment("smooth_10", changed="smoothing = 1.0", smoothing_strength=1.0),
         Experiment("bisections_3", changed="bisections = 3", bisections=3),
         Experiment("bisections_5", changed="bisections = 5", bisections=5),
         Experiment("bisections_6", changed="bisections = 6", bisections=6),
+        Experiment("gradient_steps_10", changed="gradient steps = 10", gradient_steps=10),
+        Experiment("gradient_steps_15", changed="gradient steps = 20", gradient_steps=20),
+        Experiment("gradient_steps_30", changed="gradient steps = 30", gradient_steps=30),
+        Experiment("learning_rate_002", changed="learning rate = 0.02", learning_rate=0.02),
+        Experiment("learning_rate_003", changed="learning rate = 0.03", learning_rate=0.03),
+        Experiment("learning_rate_005", changed="learning rate = 0.05", learning_rate=0.05),
+        Experiment("learning_rate_006", changed="learning rate = 0.06", learning_rate=0.06),
+        Experiment("early_stop_true", changed="early_stop = true", early_stop=True),
     ]
+    validate_experiment_suite(experiments)
+    return experiments
+
+
+def hyperparameter_signature(experiment: Experiment) -> tuple[Any, ...]:
+    return (
+        experiment.curvature_penalty,
+        experiment.smooth,
+        experiment.smoothing_strength if experiment.smooth else 0.0,
+        experiment.bisections,
+        experiment.gradient_steps,
+        experiment.learning_rate,
+        experiment.early_stop,
+        experiment.smoothing_bandwidth,
+        experiment.curvature_huber_delta,
+    )
+
+
+def validate_experiment_suite(experiments: list[Experiment]) -> None:
+    baseline_experiments = [experiment for experiment in experiments if experiment.name == "baseline"]
+    if len(baseline_experiments) != 1:
+        raise ValueError("metric screen must define exactly one baseline experiment.")
+    baseline_signature = hyperparameter_signature(baseline_experiments[0])
+    duplicates = [
+        experiment.name
+        for experiment in experiments
+        if experiment.name != "baseline"
+        and hyperparameter_signature(experiment) == baseline_signature
+    ]
+    if duplicates:
+        raise ValueError(
+            "Non-baseline experiments duplicate the default hyperparameters: "
+            + ", ".join(duplicates)
+        )
 
 
 def main() -> None:
@@ -360,13 +401,20 @@ def mean_final_curvature(path_frame: pd.DataFrame) -> float:
 
 def add_normalized_scores(summary: pd.DataFrame) -> pd.DataFrame:
     summary = summary.copy()
-    baseline = summary[summary["experiment"] == "baseline"].iloc[0]
+    baseline_rows = summary[summary["experiment"] == "baseline"]
+    if len(baseline_rows) != 1:
+        raise ValueError("Expected exactly one baseline row in metric screen summary.")
+    baseline = baseline_rows.iloc[0]
     validation_start = baseline["mean_start_validation_canonical"]
     validation_end = baseline["mean_final_validation_canonical"]
     distance_start = baseline["start_within_fold_path_distance"]
     distance_end = baseline["final_across_fold_path_distance"]
     validation_range = validation_end - validation_start
     distance_range = distance_start - distance_end
+    if abs(validation_range) < 1e-12:
+        raise ValueError("Baseline validation range is too small to normalize.")
+    if abs(distance_range) < 1e-12:
+        raise ValueError("Baseline similarity range is too small to normalize.")
     summary["validation_progress"] = (
         (summary["mean_final_validation_canonical"] - validation_start)
         / validation_range
@@ -457,7 +505,7 @@ def plot_normalized_components(output_dir: Path, summary: pd.DataFrame) -> None:
         label="baseline",
         zorder=5,
     )
-    for _, row in summary.iterrows():
+    for _, row in summary.loc[~is_baseline].iterrows():
         ax.annotate(
             row["changed"],
             (row["similarity_progress"], row["validation_progress"]),
@@ -472,7 +520,7 @@ def plot_normalized_components(output_dir: Path, summary: pd.DataFrame) -> None:
     ax.set_title("Candidate score components")
     ax.grid(alpha=0.25)
     ax.legend(frameon=False)
-    fig.savefig(output_dir / "normalized_components.png", dpi=170)
+    fig.savefig(output_dir / "normalized_components.pdf")
     plt.close(fig)
 
 
@@ -540,21 +588,23 @@ def write_report(output_dir: Path, summary: pd.DataFrame) -> None:
     top_table = markdown_table(summary.nlargest(10, "combined_score_sum")[table_columns])
     text = f"""# Metric Screening
 
-This quick screen uses only the good starting path in each of the five `year-cv`
-folds. The similarity metric is mean pairwise across-fold distance among final
-paths; lower distance means the fold-specific optimized paths agree more.
+This screen perturbs one hyperparameter at a time around the default bisection
+glide-path optimizer settings. It uses only the good starting path in each of
+the five `year-cv` folds. The similarity metric is mean pairwise across-fold
+distance among final paths; lower distance means the fold-specific optimized
+paths agree more.
 
 ## Anchors
 
-Baseline hyperparameters:
+The single baseline is the current default hyperparameter set:
 
-- `learning_rate = 0.04`
-- `bisections = 4`
-- `gradient_steps = 20`
-- `curvature_penalty = 0.0005`
-- `early_stop = false`
-- `smooth = true`
-- `smoothing_strength = 0.8`
+- `learning_rate = {baseline['learning_rate']:.6f}`
+- `bisections = {int(baseline['bisections'])}`
+- `gradient_steps = {int(baseline['gradient_steps'])}`
+- `curvature_penalty = {baseline['curvature_penalty']:.6f}`
+- `early_stop = {str(bool(baseline['early_stop'])).lower()}`
+- `smooth = {str(bool(baseline['smooth'])).lower()}`
+- `smoothing_strength = {baseline['smoothing_strength']:.6f}`
 
 Baseline start validation: `{baseline['mean_start_validation_canonical']:.6f}`
 Baseline final validation: `{baseline['mean_final_validation_canonical']:.6f}`
@@ -562,11 +612,11 @@ Baseline final validation: `{baseline['mean_final_validation_canonical']:.6f}`
 Baseline start within-fold distance: `{baseline['start_within_fold_path_distance']:.6f}`
 Baseline final across-fold distance: `{baseline['final_across_fold_path_distance']:.6f}`
 
-The similarity anchors are intentionally asymmetric: the bad end is within-fold
-dispersion among initial paths, while the good end is the across-fold dispersion
-of the baseline optimized good-start paths. That makes the similarity component
-ask whether a candidate produces final fold paths closer to the baseline's
-optimized agreement than to a loose cloud of initial paths.
+The validation component is normalized by the baseline's own start-to-final
+validation improvement. The similarity component is normalized by the
+baseline's own start-to-final movement from within-fold initial-start
+dispersion to final across-fold path distance. This makes both normalized
+coordinates explicitly relative to the default hyperparameters under test.
 
 The proposed weighted score is:
 
@@ -591,17 +641,16 @@ Best score in this screen: `{top['experiment']}` with
 ## Plots
 
 - [Validation vs similarity](validation_vs_similarity.png)
-- [Normalized components](normalized_components.png)
+- [Normalized components](normalized_components.pdf)
 - [Top 10 weighted scores](top_10_weighted_scores.png)
 - [Baseline paths](baseline/start_and_final_paths.png)
 
 ## Initial Read
 
-This is intended as a metric-design check rather than a formal hyperparameter
-claim. The most useful plots are the component scatterplots: a good metric
-should make it visually obvious when validation gains are being bought with
-path disagreement, or when path agreement is being bought by giving up
-validation.
+This is a perturbation screen around a favored baseline, not a proof of a local
+maximum in hyperparameter space. The default settings should still sit in a
+good part of the tradeoff: perturbations that improve one coordinate should make
+their cost in the other coordinate easy to see.
 """
     (output_dir / "report.md").write_text(text, encoding="utf-8")
 
