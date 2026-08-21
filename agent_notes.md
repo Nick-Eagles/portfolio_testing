@@ -370,21 +370,39 @@ Possible next diagnostic directions:
 
 ## Retirement Arm
 
-The retirement arm was added as a new branch of the project after the fixed-portfolio and glide-path arms. It assumes retirement at age 65, withdrawals beginning at age 66, and terminal evaluation at age 90. Withdrawals are fixed in real terms, with the first withdrawal equal to 3.5% of the age-65 balance.
+The retirement arm was added as a new branch of the project after the
+fixed-portfolio and glide-path arms. Current modeling assumes retirement at age
+65, the first withdrawal at age 65, and terminal evaluation through age 90.
+Withdrawals are fixed in real terms, with each withdrawal equal to 3.5% of the
+age-65 balance.
 
-Core scripts:
+Current retirement organization:
 
-- `simulate_retirement.py`
-- `plot_retirement_glide_path.py`
-- `plot_retirement_withdrawal_sweep.py`
-- `external_comparisons/compare_retirement_glide_paths.py`
-- `external_comparisons/plot_external_glide_paths.py`
+- `data/retirement/` stores manually reconstructed Vanguard and Fidelity
+  target-date-style glide paths used as reference inputs.
+- `retirement_block/` is the post-retirement foundation workflow. It plots the
+  reference paths, preserves the withdrawal-rate sweep that justified 3.5%, and
+  selects the fixed post-retirement allocation for ages 65 through 90.
+- `consolidated_path_optimizer/optimize_retirement_path.py` optimizes the
+  pre-retirement accumulation path into that fixed post-retirement block.
+- Older root retirement scripts, `external_comparisons/`, and
+  `experimental_retirement_path_optimizer/` are lab history unless explicitly
+  needed for archaeology.
+
+Current reproducible post-retirement foundation:
+
+```bash
+uv run python retirement_block/plot_reference_glide_paths.py
+uv run python retirement_block/select_withdrawal_rate.py
+uv run python retirement_block/optimize_post_retirement_block.py
+```
 
 Current canonical output locations:
 
-- `data/<dataset>/retirement/`
-- `plots/<dataset>/retirement/`
-- `external_comparisons/`
+- `retirement_block/outputs/`
+- `retirement_block/plots/`
+- `consolidated_path_optimizer/outputs/retirement_path/`
+- `consolidated_path_optimizer/plots/retirement_path/`
 
 External comparison glide paths were approximated from user descriptions:
 
@@ -395,8 +413,12 @@ Major retirement-arm choices and experiments so far:
 
 - Initial post-retirement logic evaluated fixed portfolios with the same block bootstrap machinery as the rest of the project.
 - The post-retirement objective was changed to maximize the mean terminal wealth ratio among the worst 2% of paths, with no hard 50% floor constraint.
-- Withdrawal rate was changed to 3.5% real after experiments at 3% and 4%.
-- A withdrawal-rate sweep script was added because an early line plot looked suspiciously linear. The dotted 0.5 reference line was removed.
+- Withdrawal rate was changed to 3.5% real after a data-driven sweep over 3%
+  through 4%. That sweep is now preserved in
+  `retirement_block/select_withdrawal_rate.py`.
+- The selected post-retirement fixed allocation is chosen by
+  `retirement_block/optimize_post_retirement_block.py`; for the `from_1927`
+  default run it selects 48% stocks / 24% bonds / 28% T-bills.
 - Pre-retirement logic borrows the greedy glide-path machinery, including endpoint lookahead with exact linear interpolation and diagnostic plots.
 - Candidate search was sped up by limiting pre-retirement candidates to portfolios within `0.1` Euclidean simplex-coordinate distance of the next older selected portfolio.
 - Endpoint lookahead was made configurable with `--projection-steps`; the retirement default was set to 4.
@@ -410,35 +432,52 @@ The first contribution implementation was scale-free because every pre-retiremen
 
 The user identified a major conceptual flaw: for age-specific pre-retirement optimization and comparison plots, the old logic treated each starting age as a fresh account beginning at zero, then added contributions from that starting age through age 65. That meant, for example, the age-60 optimization/plot point ignored the large account balance that would normally have accumulated from contributions made at ages 20-59. Near retirement, this made new annual contributions unrealistically large relative to modeled account wealth.
 
-That issue is now fixed; keep it only as historical context when interpreting older retirement runs.
+That issue is now fixed in the consolidated retirement optimizer; keep it only
+as historical context when interpreting older retirement runs.
 
-Current pre-retirement algorithm:
+Important age-65 timing cleanup:
 
-1. Build a no-contribution reference path from age 65 down to age 20.
-2. Simulate annual contributions forward under that reference path and estimate, for each age, the mean ratio `annual_contribution / entering_balance` across bootstrapped paths. The denominator is the account balance entering that age before that year's contribution.
-3. Run the final greedy pre-retirement pass using those age-specific real contribution constants. Age 20 still starts from zero; later ages use a unit entering balance with a contribution scaled to the reference-path ratio.
-4. Preserve the contribution timing convention used by the simulator: contributions are added at the beginning of each pre-retirement year, then that year's return is applied.
-5. Use endpoint lookahead with exact linear interpolation when scoring candidates, with projected contribution constants taken from the projected starting age.
+- Earlier retirement code used age 65 as a final accumulation/boundary year and
+  began withdrawals at age 66.
+- The current intended model begins withdrawals at age 65. Therefore age 65 is
+  part of the fixed post-retirement block, not an independently optimized or
+  old-path-anchored accumulation allocation.
+- `consolidated_path_optimizer/optimize_retirement_path.py` still represents
+  age 65 as a fixed control endpoint for interpolation into retirement, but
+  accumulation stops before age 65 and post-retirement withdrawals start at age
+  65.
 
-The current pre-retirement objective uses an XIRR-to-65 times post-retirement-block framing:
+Current consolidated pre-retirement algorithm:
 
-- For each bootstrapped path and candidate, simulate the starting balance plus annual contributions through age 65.
-- Solve for the annual growth factor `g = 1 + XIRR` that would reproduce the age-65 balance from the same cash-flow schedule.
-- Convert that to a pre-retirement cumulative ratio with `g ** years_to_retirement`.
-- Multiply path-by-path by the post-retirement terminal wealth ratio from the selected post-retirement block.
-- Optimize the mean of the worst 4% of those combined ratios.
-
-This XIRR framing was chosen because it makes contributions matter without making near-retirement ages look like pure start-from-zero problems, and because multiplying by the post-retirement block avoids a sharp objective discontinuity at the retirement boundary.
+1. Load the fixed ages-65-through-90 post-retirement block from
+   `retirement_block/outputs/post_retirement_block.csv`.
+2. Derive starting-age-specific contribution constants from a forward
+   accumulation pass using the Fidelity reference path in `data/retirement/`.
+3. Represent ages 20 through 65 with bisection control points, with age 65
+   fixed to the post-retirement block allocation. Accumulation contributions
+   and returns stop before the age-65 withdrawal year.
+4. For each evaluated starting age, simulate accumulation into retirement, then
+   continue through the fixed post-retirement block with withdrawals starting
+   at age 65.
+5. Evaluate wealth outcomes at ages 65 through 90, floor them at 0 for the
+   pre-retirement-linked objective, and optimize the weighted mean of worst-4%
+   outcomes.
 
 Current retirement comparison logic:
 
-- `external_comparisons/compare_retirement_glide_paths.py` compares the project path against approximate Vanguard and Fidelity glide paths over the same three asset classes.
-- The comparison script reads the project retirement output's pre-retirement contribution schedule; `--annual-contribution` is now mainly a fallback for older outputs that do not contain per-age contribution constants.
-- Pre-retirement comparison metrics use XIRR growth factors from each starting age through retirement.
-- Post-retirement comparison metrics continue to compare terminal wealth ratios after the withdrawal block.
-- The comparison script also generates three synthetic random pre-retirement paths. Each starts from the selected age-65 portfolio, picks a fixed random direction in simplex space, and steps backward by a fixed distance intended to roughly hit a simplex edge by age 20.
-- The random paths are plotted in `external_comparisons/retirement_comparison_random_paths.pdf`.
-- Only the random path with the best age-20 worst-4% XIRR score is added to the pre-retirement comparison grid, labeled `Best Random`, so those plots usually show four curves: Ours, Vanguard, Fidelity, and Best Random.
+- `consolidated_path_optimizer/compare_external_glide_paths.py` compares the
+  consolidated retirement output against approximate Vanguard and Fidelity
+  glide paths over the same three asset classes.
+- Reference glide path CSVs live in `data/retirement/`.
+- Pre-retirement comparisons use the consolidated optimizer's
+  starting-age-specific contribution constants.
+- Post-retirement comparison metrics continue to compare terminal wealth ratios
+  after the withdrawal block.
+- The comparison script also generates synthetic random pre-retirement paths.
+  Each starts from the selected age-65 portfolio, picks a fixed random direction
+  in simplex space, and steps backward by a fixed distance intended to roughly
+  hit a simplex edge by age 20.
+  `Best Random` is the random path with the best age-20 worst-4% score.
 
 ### Experimental Retirement Bisection + Gradient Optimizer
 
@@ -453,7 +492,7 @@ Core files:
 - `experimental_retirement_path_optimizer/compare_external_glide_paths.py`
 - `experimental_retirement_path_optimizer/README.md`
 
-Current objective and path setup:
+Historical objective and path setup:
 
 - The path covers ages 20 through 90.
 - Ages 65 through 90 are fixed from the selected retirement block loaded from
@@ -471,11 +510,12 @@ Current objective and path setup:
   where all-positive gradients became equal-coordinate Adam steps and were
   erased by simplex projection, making early bisection levels appear inert.
 
-Current contribution model in this branch:
+Historical contribution model in this branch:
 
 - Contribution constants are derived from a full block-bootstrapped forward
   accumulation pass using the Fidelity external glide path
-  `external_comparisons/fidelity_glide_path.csv`.
+  `external_comparisons/fidelity_glide_path.csv`. The current reference input
+  location is `data/retirement/fidelity_glide_path.csv`.
 - Age 20 contributes `1.0`. For later starting ages, the constant is
   `1 / mean_entering_balance_at_age` from that Fidelity-reference accrual pass.
 - For a given start age, the same start-age-specific constant is used every
@@ -484,7 +524,7 @@ Current contribution model in this branch:
 - `optimize.py` writes `outputs/contribution_scales.csv` and automatically
   generates `plots/contribution_start_constants_by_age.pdf` and `.png`.
 
-Current pre-retirement objective in this branch:
+Historical pre-retirement objective in this branch:
 
 - For each starting age 20 through 65, simulate accumulation through age 65
   using that start age's constant contribution.
@@ -544,7 +584,8 @@ three current algorithms:
   between control points; gradients are computed on the full path and pulled
   back through the interpolation Jacobian.
 - `optimize_retirement_path.py`: retirement accumulation optimizer for ages
-  20-65, assuming the post-retirement block already exists.
+  20-65, assuming the `retirement_block/` post-retirement block already exists.
+  Age 65 is fixed to that block and is the first withdrawal year.
 
 There is also a unified gradient-check script:
 

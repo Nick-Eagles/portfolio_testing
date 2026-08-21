@@ -69,25 +69,25 @@ The glide-path work has several generations:
   an endpoint, inserts control points by bisection, then uses projected Adam on
   those controls while evaluating integer horizons by linear interpolation.
 
-The retirement work is split between the main retirement scripts and a newer
-experimental optimizer:
+The retirement work is now split between a post-retirement foundation workflow
+and the consolidated pre-retirement optimizer:
 
-- `simulate_retirement.py`, `plot_retirement_glide_path.py`, and
-  `plot_retirement_withdrawal_sweep.py` model accumulation to retirement,
-  fixed real withdrawals after retirement, and retirement-specific downside
-  outcomes. The current retirement setup assumes retirement at age 65 and uses
-  annual rebalancing over the same three asset classes.
-- `external_comparisons/` contains approximate Vanguard and Fidelity
-  target-date-style glide paths plus comparison scripts and plots.
-- `experimental_retirement_path_optimizer/` adapts the control-point plus
-  analytic-gradient approach to ages 20 through 65, while holding the
-  post-retirement block fixed. Its objective uses common bootstrap paths,
-  age-specific contribution constants, and worst-tail wealth outcomes across
-  retirement ages.
+- `data/retirement/` contains approximate Vanguard and Fidelity
+  target-date-style glide paths used as reference inputs.
+- `retirement_block/` plots those reference paths, preserves the
+  withdrawal-rate sweep that motivated a 3.5% real withdrawal rate, and selects
+  the fixed post-retirement allocation used from ages 65 through 90.
+- `consolidated_path_optimizer/optimize_retirement_path.py` optimizes the
+  accumulation path into that fixed post-retirement block. Retirement and the
+  first withdrawal both occur at age 65, so age 65 is part of the fixed
+  post-retirement block.
+- Older scripts such as `simulate_retirement.py`, `plot_retirement_glide_path.py`,
+  `plot_retirement_withdrawal_sweep.py`, `external_comparisons/`, and
+  `experimental_retirement_path_optimizer/` are lab history unless explicitly
+  needed for archaeology.
 
 Generated CSVs, parquet files, and plots are intentionally kept near the script
-or project arm that created them. In general, `data/<dataset>/...` and
-`plots/<dataset>/...` hold the main root-script outputs, while directories such
-as `full_path_optimizer/outputs/` or
-`experimental_retirement_path_optimizer/outputs/` hold outputs for newer
-experimental branches.
+or project arm that created them. Current consolidated outputs live under
+`consolidated_path_optimizer/outputs/` and `consolidated_path_optimizer/plots/`;
+post-retirement foundation outputs live under `retirement_block/outputs/` and
+`retirement_block/plots/`.

@@ -1,0 +1,13 @@
+setting,value
+dataset,from_1927
+num_simulations,20000
+seed,20260620
+block_length,10
+first_withdrawal_age,65
+max_starting_age,90
+withdrawal_rate,0.035
+tail_fraction,0.02
+selected_stock_weight,0.48
+selected_bond_weight,0.24
+selected_t_bill_weight,0.28
+selected_terminal_worst_2pct_mean,0.036566281990917424
