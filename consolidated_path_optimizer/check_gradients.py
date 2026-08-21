@@ -112,8 +112,9 @@ def check_glide(args: argparse.Namespace) -> None:
 
 def check_retirement(args: argparse.Namespace) -> None:
     rng = np.random.default_rng(20260802)
-    retirement_path = retirement.default_retirement_path(args.dataset)
-    reference_frame = retirement.load_retirement_weight_path(retirement_path)
+    reference_frame = retirement.load_post_retirement_block(
+        retirement.DEFAULT_POST_RETIREMENT_BLOCK_PATH
+    )
     reference_weights = retirement.weights_by_age_from_frame(reference_frame)
     contribution_reference = retirement.load_age_weight_path(
         retirement.DEFAULT_CONTRIBUTION_REFERENCE_PATH

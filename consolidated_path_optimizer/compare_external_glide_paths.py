@@ -1,11 +1,12 @@
 """Compare the experimental retirement optimizer output with external paths.
 
 This is the experimental-retirement-path counterpart to
-`external_comparisons/compare_retirement_glide_paths.py`. It reads
+the earlier experimental retirement comparison script. It reads
 `final_path.csv` and `contribution_scales.csv` from this directory's optimizer
 outputs and evaluates external pre-retirement paths under the same contribution
 framing used by `optimize.py`: a path starting at age A uses the single
-contribution constant derived for A in every year from A through age 65.
+contribution constant derived for A in every accumulation year before the
+age-65 withdrawal year.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-EXTERNAL_DIR = PROJECT_ROOT / "external_comparisons"
+REFERENCE_PATH_DIR = PROJECT_ROOT / "data" / "retirement"
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
@@ -35,7 +36,6 @@ from portfolio_helpers import RETURN_COLUMNS
 from simulate_retirement import (
     BLOCK_LENGTH,
     DEFAULT_SEED,
-    FIRST_WITHDRAWAL_AGE,
     MAX_STARTING_AGE,
     MIN_STARTING_AGE,
     NUM_SIMULATIONS,
@@ -43,7 +43,6 @@ from simulate_retirement import (
     PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
     RETIREMENT_AGE,
     WEIGHT_COLUMNS,
-    WITHDRAWAL_RATE,
     age_path_offset,
 )
 from simulate_returns import (
@@ -67,6 +66,8 @@ METRICS = [
     ("terminal_mean", "Expected Value"),
 ]
 PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR = 0.0
+FIRST_WITHDRAWAL_AGE = RETIREMENT_AGE
+WITHDRAWAL_RATE = 0.035
 RETIREMENT_EVALUATION_AGES = np.arange(RETIREMENT_AGE, MAX_STARTING_AGE + 1)
 
 
@@ -193,7 +194,7 @@ def use_shared_post_retirement_block(
     ][["starting_age", *WEIGHT_COLUMNS]]
     result = {}
     for approach, path in strategies.items():
-        pre = path[path["starting_age"] <= RETIREMENT_AGE][["starting_age", *WEIGHT_COLUMNS]]
+        pre = path[path["starting_age"] < FIRST_WITHDRAWAL_AGE][["starting_age", *WEIGHT_COLUMNS]]
         result[approach] = pd.concat([pre, shared_post], ignore_index=True)
     return result
 
@@ -216,7 +217,7 @@ def terminal_balances_with_start_age_contribution(
             else np.ones(paths.shape[0], dtype=float)
         )
         contribution = contribution_by_start_age[start_age]
-        for age in range(start_age, RETIREMENT_AGE + 1):
+        for age in range(start_age, FIRST_WITHDRAWAL_AGE):
             year_returns = asset_returns[paths[:, age_path_offset(age)]] @ weights_by_age[age]
             balances = (balances + contribution) * (1 + year_returns)
 
@@ -296,11 +297,11 @@ def evaluate_paths(
                     **summarize_pre_retirement_outcomes(outcomes_by_age),
                     "annual_contribution": contribution_by_start_age[start_age],
                     "normalization": (
-                        "Mean over floored retirement-age wealth outcomes from "
-                        "age 65 through 90. Start age 20 begins at 0; later "
-                        "starts begin at 1. Each start uses its own constant "
-                        "annual contribution through age 65."
-                    ),
+                    "Mean over floored retirement-age wealth outcomes from "
+                    "age 65 through 90. Start age 20 begins at 0; later "
+                    "starts begin at 1. Each start uses its own constant "
+                    "annual contribution before the age-65 withdrawal year."
+                ),
                 }
             )
 
@@ -531,8 +532,8 @@ def main() -> None:
     contribution_by_start_age = load_contribution_constants(args.input_dir)
     strategies = {
         "Ours": ours,
-        "Vanguard": load_external_path(EXTERNAL_DIR / "vanguard_glide_path.csv"),
-        "Fidelity": load_external_path(EXTERNAL_DIR / "fidelity_glide_path.csv"),
+        "Vanguard": load_external_path(REFERENCE_PATH_DIR / "vanguard_glide_path.csv"),
+        "Fidelity": load_external_path(REFERENCE_PATH_DIR / "fidelity_glide_path.csv"),
     }
     random_paths = generate_random_pre_retirement_paths(
         retirement_path=ours,

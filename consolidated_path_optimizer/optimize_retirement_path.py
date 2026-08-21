@@ -1,9 +1,10 @@
-"""Experimental bisection + gradient optimizer for retirement accumulation.
+"""Bisection + gradient optimizer for retirement accumulation.
 
-The existing retirement path is used as a fixed age-65-through-90 block. Ages
-20 through 65 are represented by bisection control points, with age 65 fixed to
-the loaded retirement block. The objective is a weighted mean across starting
-ages 20..65 of the mean worst-4% floored wealth across retirement ages 65..90.
+The selected post-retirement block is fixed for ages 65 through 90, with the
+first withdrawal at age 65. Ages 20 through 65 are represented by bisection
+control points, with age 65 fixed to the post-retirement block allocation. The
+objective is a weighted mean across starting ages 20..65 of the mean worst-4%
+floored wealth across retirement ages 65..90.
 """
 
 from __future__ import annotations
@@ -28,18 +29,15 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
-from dataset_variants import get_dataset_variant
 from path_simulation import project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
 from simulate_retirement import (
     BLOCK_LENGTH as DEFAULT_BLOCK_LENGTH,
     DEFAULT_SEED,
-    FIRST_WITHDRAWAL_AGE,
     MAX_STARTING_AGE,
     MIN_STARTING_AGE,
     RETIREMENT_AGE,
     WEIGHT_COLUMNS,
-    WITHDRAWAL_RATE,
     age_path_offset,
 )
 from simulate_returns import (
@@ -65,6 +63,8 @@ from plots import plot_validation_traces
 
 OPTIMIZED_START_AGE = MIN_STARTING_AGE
 FIXED_ANCHOR_AGE = RETIREMENT_AGE
+FIRST_WITHDRAWAL_AGE = RETIREMENT_AGE
+WITHDRAWAL_RATE = 0.035
 OPTIMIZED_AGES = np.arange(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1)
 EVALUATED_START_AGES = np.arange(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1)
 RETIREMENT_EVALUATION_AGES = np.arange(FIXED_ANCHOR_AGE, MAX_STARTING_AGE + 1)
@@ -72,8 +72,11 @@ TAIL_FRACTION = 0.04
 PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR = 0.0
 DEFAULT_AGE_65_WEIGHT_RATIO = 1000.0
 ENDPOINT_CACHE_VERSION = "retirement_age20_endpoint_v1"
+DEFAULT_POST_RETIREMENT_BLOCK_PATH = (
+    PROJECT_ROOT / "retirement_block" / "outputs" / "post_retirement_block.csv"
+)
 DEFAULT_CONTRIBUTION_REFERENCE_PATH = (
-    PROJECT_ROOT / "external_comparisons" / "fidelity_glide_path.csv"
+    PROJECT_ROOT / "data" / "retirement" / "fidelity_glide_path.csv"
 )
 
 
@@ -119,7 +122,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--endpoint-grid-step", type=float, default=DEFAULT_ENDPOINT_GRID_STEP)
     parser.add_argument("--endpoint-chunk-size", type=int, default=DEFAULT_ENDPOINT_CHUNK_SIZE)
-    parser.add_argument("--retirement-path", type=Path, default=None)
+    parser.add_argument(
+        "--post-retirement-block",
+        type=Path,
+        default=DEFAULT_POST_RETIREMENT_BLOCK_PATH,
+        help=(
+            "CSV containing the fixed post-retirement allocation for ages 65-90. "
+            "Run retirement_block/optimize_post_retirement_block.py first."
+        ),
+    )
     parser.add_argument(
         "--contribution-reference-path",
         type=Path,
@@ -190,28 +201,25 @@ def make_shared_age_returns(
     return asset_returns[paths], asset_returns
 
 
-def default_retirement_path(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "retirement" / "retirement_path.csv"
-
-
-def load_retirement_weight_path(path: Path) -> pd.DataFrame:
+def load_post_retirement_block(path: Path) -> pd.DataFrame:
     if not path.exists():
-        raise FileNotFoundError(f"Missing retirement path: {path}")
+        raise FileNotFoundError(f"Missing post-retirement block: {path}")
     frame = pd.read_csv(path) if path.suffix == ".csv" else pd.read_parquet(path)
     required = {"starting_age", *WEIGHT_COLUMNS}
     missing = required - set(frame.columns)
     if missing:
-        raise ValueError(f"retirement path is missing columns: {sorted(missing)}")
+        raise ValueError(f"post-retirement block is missing columns: {sorted(missing)}")
     frame = frame.sort_values("starting_age").drop_duplicates("starting_age", keep="last")
-    expected = list(range(MIN_STARTING_AGE, MAX_STARTING_AGE + 1))
+    expected = list(range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1))
     ages = frame["starting_age"].astype(int).tolist()
     if ages != expected:
         raise ValueError(
-            f"retirement path must contain ages {MIN_STARTING_AGE} through {MAX_STARTING_AGE}."
+            f"post-retirement block must contain ages "
+            f"{FIRST_WITHDRAWAL_AGE} through {MAX_STARTING_AGE}."
         )
     weights = frame[WEIGHT_COLUMNS].to_numpy(dtype=float)
     if not np.allclose(weights.sum(axis=1), 1.0, atol=1e-6):
-        raise ValueError("retirement path weights must sum to 1.")
+        raise ValueError("post-retirement block weights must sum to 1.")
     return frame[["starting_age", *WEIGHT_COLUMNS]].copy()
 
 
@@ -474,7 +482,7 @@ def simulate_terminal_values_for_start(
     growth_by_age: dict[int, np.ndarray] = {}
 
     contribution = contributions[start_age]
-    for age in range(start_age, FIXED_ANCHOR_AGE + 1):
+    for age in range(start_age, FIRST_WITHDRAWAL_AGE):
         returns = path_returns[:, age_path_offset(age), :]
         growth = 1 + returns @ age_weights[age]
         pre_contribution_balances[age] = balances + contribution
@@ -482,7 +490,7 @@ def simulate_terminal_values_for_start(
         balances = pre_contribution_balances[age] * growth
 
     balance_65 = balances.copy()
-    outcomes_by_age = {FIXED_ANCHOR_AGE: balance_65.copy()}
+    outcomes_by_age: dict[int, np.ndarray] = {}
     post_growth_by_age: dict[int, np.ndarray] = {}
     for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
         returns = path_returns[:, age_path_offset(age), :]
@@ -512,11 +520,11 @@ def reverse_terminal_gradient_for_start(
     post_growth_by_age = reverse_cache["post_growth_by_age"]
 
     adjoint = np.full(len(tail_indexes), coefficient, dtype=float)
-    if evaluation_age > FIXED_ANCHOR_AGE:
+    if evaluation_age >= FIRST_WITHDRAWAL_AGE:
         adjoint_balance_65 = np.zeros(len(tail_indexes), dtype=float)
         for age in range(evaluation_age, FIRST_WITHDRAWAL_AGE - 1, -1):
             growth = post_growth_by_age[age][tail_indexes]
-            if age - 1 == FIXED_ANCHOR_AGE:
+            if age == FIRST_WITHDRAWAL_AGE:
                 adjoint_balance_65 += adjoint * (1 - WITHDRAWAL_RATE) * growth
             else:
                 adjoint_balance_65 += adjoint * (-WITHDRAWAL_RATE) * growth
@@ -524,7 +532,7 @@ def reverse_terminal_gradient_for_start(
         adjoint = adjoint_balance_65
 
     gradient = np.zeros((len(OPTIMIZED_AGES), len(WEIGHT_COLUMNS)), dtype=float)
-    for age in range(FIXED_ANCHOR_AGE, start_age - 1, -1):
+    for age in range(FIRST_WITHDRAWAL_AGE - 1, start_age - 1, -1):
         age_index = age - OPTIMIZED_START_AGE
         returns = path_returns[tail_indexes, age_path_offset(age), :]
         pre_contribution = pre_contribution_balances[age][tail_indexes]
@@ -888,7 +896,8 @@ def path_frame(
                 "is_fixed_retirement_block": int(age) == FIXED_ANCHOR_AGE,
             }
         )
-    for age in range(FIRST_WITHDRAWAL_AGE, MAX_STARTING_AGE + 1):
+    post_output_start_age = max(FIRST_WITHDRAWAL_AGE, FIXED_ANCHOR_AGE + 1)
+    for age in range(post_output_start_age, MAX_STARTING_AGE + 1):
         weights = fixed_weights_by_age[age]
         rows.append(
             {
@@ -1004,17 +1013,19 @@ def plot_contribution_scales(scales: pd.DataFrame, output_pdf: Path) -> None:
     plt.close(fig)
 
 
-def write_metadata(args: argparse.Namespace, output_dir: Path, retirement_path: Path) -> None:
+def write_metadata(args: argparse.Namespace, output_dir: Path, post_retirement_block: Path) -> None:
     metadata = pd.DataFrame(
         [
             ("dataset", args.dataset),
             ("num_simulations", args.num_simulations),
             ("seed", args.seed),
             ("block_length", args.block_length),
-            ("retirement_path", retirement_path),
+            ("post_retirement_block", post_retirement_block),
             ("contribution_reference_path", args.contribution_reference_path),
             ("optimized_ages", f"{OPTIMIZED_START_AGE}-{FIXED_ANCHOR_AGE}"),
             ("fixed_retirement_block", f"{FIXED_ANCHOR_AGE}-{MAX_STARTING_AGE}"),
+            ("first_withdrawal_age", FIRST_WITHDRAWAL_AGE),
+            ("withdrawal_rate", WITHDRAWAL_RATE),
             (
                 "regularized_objective",
                 "retirement objective minus Huber curvature penalty",
@@ -1070,8 +1081,8 @@ def run_single_optimization(
 ) -> dict[str, float | str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     plot_dir.mkdir(parents=True, exist_ok=True)
-    retirement_path = args.retirement_path or default_retirement_path(args.dataset)
-    reference_frame = load_retirement_weight_path(retirement_path)
+    post_retirement_block = args.post_retirement_block
+    reference_frame = load_post_retirement_block(post_retirement_block)
     reference_weights = weights_by_age_from_frame(reference_frame)
     contribution_reference_frame = load_age_weight_path(args.contribution_reference_path)
     contribution_reference_weights = weights_by_age_from_frame(contribution_reference_frame)
@@ -1088,7 +1099,7 @@ def run_single_optimization(
         "num_simulations": args.num_simulations,
         "seed": args.seed,
         "block_length": args.block_length,
-        "retirement_path": str(retirement_path),
+        "post_retirement_block": str(post_retirement_block),
         "contribution_reference_path": str(args.contribution_reference_path),
         "fixed_age_65": fixed_age_65,
         "contributions": [contributions[int(age)] for age in EVALUATED_START_AGES],
@@ -1267,7 +1278,7 @@ def run_single_optimization(
     control_history_frame.to_csv(output_dir / "control_history.csv", index=False)
     if not trace.empty:
         trace.to_csv(output_dir / "optimization_traces.csv", index=False)
-    write_metadata(args, output_dir, retirement_path)
+    write_metadata(args, output_dir, post_retirement_block)
     plot_contribution_scales(scales, plot_dir / "contribution_start_constants_by_age.pdf")
     plot_iteration_paths(path_history_frame, plot_dir / "path_iterations.pdf")
     if not trace.empty:
