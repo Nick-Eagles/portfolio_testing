@@ -33,14 +33,16 @@ from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
 from dataset_variants import DATASET_VARIANTS, ROOT
 from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS
-from simulate_retirement import (
+from retirement_block.common import (
     BLOCK_LENGTH,
+    DEFAULT_NUM_SIMULATIONS as NUM_SIMULATIONS,
     DEFAULT_SEED,
+    DEFAULT_WITHDRAWAL_RATE,
+    FIRST_WITHDRAWAL_AGE,
     MAX_STARTING_AGE,
     MIN_STARTING_AGE,
-    NUM_SIMULATIONS,
-    POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
-    PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
+    POST_RETIREMENT_TAIL_FRACTION as POST_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
+    PRE_RETIREMENT_TAIL_FRACTION as PRE_RETIREMENT_OBJECTIVE_TAIL_FRACTION,
     RETIREMENT_AGE,
     WEIGHT_COLUMNS,
     age_path_offset,
@@ -66,8 +68,7 @@ METRICS = [
     ("terminal_mean", "Expected Value"),
 ]
 PRE_RETIREMENT_TERMINAL_WEALTH_FLOOR = 0.0
-FIRST_WITHDRAWAL_AGE = RETIREMENT_AGE
-WITHDRAWAL_RATE = 0.035
+WITHDRAWAL_RATE = DEFAULT_WITHDRAWAL_RATE
 RETIREMENT_EVALUATION_AGES = np.arange(RETIREMENT_AGE, MAX_STARTING_AGE + 1)
 
 

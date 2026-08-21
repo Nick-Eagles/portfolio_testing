@@ -22,13 +22,13 @@ from simulate_glide_path import (
     DEFAULT_SEED as GLIDE_DEFAULT_SEED,
     make_rng as make_glide_rng,
 )
-from simulate_retirement import (
+from retirement_block.common import (
     BLOCK_LENGTH as RETIREMENT_BLOCK_LENGTH,
     DEFAULT_SEED as RETIREMENT_DEFAULT_SEED,
+    DEFAULT_WITHDRAWAL_RATE as WITHDRAWAL_RATE,
     FIRST_WITHDRAWAL_AGE,
     MAX_STARTING_AGE,
     MIN_STARTING_AGE,
-    WITHDRAWAL_RATE,
     age_path_offset,
     make_rng as make_retirement_rng,
 )

@@ -21,6 +21,7 @@ FIRST_WITHDRAWAL_AGE = 65
 MAX_STARTING_AGE = 90
 DEFAULT_WITHDRAWAL_RATE = 0.035
 POST_RETIREMENT_TAIL_FRACTION = 0.02
+PRE_RETIREMENT_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
 DATA_DIR = PROJECT_ROOT / "data" / "retirement"
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
@@ -58,4 +59,3 @@ def validate_reference_path(path: pd.DataFrame) -> pd.DataFrame:
     if not np.allclose(result[WEIGHT_COLUMNS].sum(axis=1), 1.0, atol=1e-6):
         raise ValueError("reference path weights must sum to 1.")
     return result.reset_index(drop=True)
-

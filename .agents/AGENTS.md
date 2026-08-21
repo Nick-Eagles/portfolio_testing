@@ -143,10 +143,10 @@ The fixed-portfolio arm and older greedy/bisected glide-path scripts are
 historical context. The user is likely to discard the fixed-portfolio arm. Do
 not direct new work toward first-level scripts unless asked.
 
-`simulate_retirement.py` still matters as the source of the already-computed
-post-retirement block consumed by the consolidated retirement optimizer.
-Retirement assumptions remain: retirement at age 65, withdrawals begin at age
-66, and the default first withdrawal is 3.5% of the age-65 balance.
+`retirement_block/` is now the source of the post-retirement foundation consumed
+by the consolidated retirement optimizer. Retirement assumptions remain:
+retirement at age 65, withdrawals begin at age 65, and the default withdrawal
+rate is 3.5% of the age-65 balance.
 
 ## Supporting Modules
 

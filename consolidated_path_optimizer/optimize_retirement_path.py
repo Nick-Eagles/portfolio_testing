@@ -31,9 +31,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
 from path_simulation import project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
-from simulate_retirement import (
+from retirement_block.common import (
     BLOCK_LENGTH as DEFAULT_BLOCK_LENGTH,
     DEFAULT_SEED,
+    DEFAULT_WITHDRAWAL_RATE,
+    FIRST_WITHDRAWAL_AGE,
     MAX_STARTING_AGE,
     MIN_STARTING_AGE,
     RETIREMENT_AGE,
@@ -63,8 +65,7 @@ from plots import plot_validation_traces
 
 OPTIMIZED_START_AGE = MIN_STARTING_AGE
 FIXED_ANCHOR_AGE = RETIREMENT_AGE
-FIRST_WITHDRAWAL_AGE = RETIREMENT_AGE
-WITHDRAWAL_RATE = 0.035
+WITHDRAWAL_RATE = DEFAULT_WITHDRAWAL_RATE
 OPTIMIZED_AGES = np.arange(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1)
 EVALUATED_START_AGES = np.arange(OPTIMIZED_START_AGE, FIXED_ANCHOR_AGE + 1)
 RETIREMENT_EVALUATION_AGES = np.arange(FIXED_ANCHOR_AGE, MAX_STARTING_AGE + 1)
