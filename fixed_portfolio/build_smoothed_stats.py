@@ -1,9 +1,15 @@
 import argparse
+import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from convex_smoothing import (
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from fixed_portfolio.smoothing import (
     ASSET_COLORS,
     DATASET_VARIANTS,
     DEFAULT_BLOCK_LENGTH,
@@ -13,8 +19,6 @@ from convex_smoothing import (
     PURE_ASSET_ORDER,
     ROOT,
     add_pure_asset_labels,
-    add_simplex_coordinates,
-    draw_simplex_outline,
     get_pure_asset_dir,
     get_smoothed_metadata_csv,
     get_smoothed_stats_parquet,
@@ -24,6 +28,7 @@ from convex_smoothing import (
     make_smoothing_subtitle,
     smooth_q02_values,
 )
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 
 
 def parse_args() -> argparse.Namespace:

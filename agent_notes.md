@@ -101,10 +101,11 @@ This arm is still important because it established most of the simulation and sm
 Core scripts:
 
 - `simulate_returns.py`
-- `build_smoothed_stats.py`
-- `plot_smoothed_q02_results.py`
-- `plot_smoothed_optimal_path.py`
-- `convex_smoothing.py`
+- `fixed_portfolio/build_smoothed_stats.py`
+- `fixed_portfolio/plot_smoothed_q02_results.py`
+- `fixed_portfolio/plot_smoothed_optimal_path.py`
+- `fixed_portfolio/smoothing.py`
+- `simplex_geometry.py`
 
 Current raw simulation settings:
 
@@ -116,8 +117,11 @@ Current raw simulation settings:
 
 Core outputs:
 
-- `data/<dataset>/portfolio_return_summary.parquet`
-- `data/<dataset>/portfolio_return_summary_checkpoints.parquet`
+- `fixed_portfolio/outputs/<dataset>/portfolio_return_summary.parquet`
+- `fixed_portfolio/outputs/<dataset>/portfolio_return_summary_checkpoints.parquet`
+- `fixed_portfolio/outputs/<dataset>/portfolio_smoothed_q02_stats.parquet`
+- `fixed_portfolio/outputs/<dataset>/smoothed_optimal_path.csv`
+- `fixed_portfolio/plots/<dataset>/`
 
 What this arm taught us:
 
@@ -129,9 +133,10 @@ What this arm taught us:
 The established fixed-portfolio workflow is still:
 
 ```bash
-uv run python build_smoothed_stats.py --dataset from_1927
-uv run python plot_smoothed_q02_results.py --dataset from_1927
-uv run python plot_smoothed_optimal_path.py --dataset from_1927
+uv run python simulate_returns.py --dataset from_1927
+uv run python fixed_portfolio/build_smoothed_stats.py --dataset from_1927
+uv run python fixed_portfolio/plot_smoothed_q02_results.py --dataset from_1927
+uv run python fixed_portfolio/plot_smoothed_optimal_path.py --dataset from_1927
 ```
 
 ## Glide Path Arm
@@ -142,7 +147,7 @@ Core scripts:
 
 - `simulate_glide_path.py`
 - `plot_glide_path.py`
-- `q02_diff_density.py`
+- `fixed_portfolio/q02_diff_density.py`
 
 Current main glide path settings:
 
@@ -366,7 +371,7 @@ Possible next diagnostic directions:
 
 ## Convergence Diagnostics
 
-`q02_diff_density.py` is no longer just about `q02`. It was extended to support the glide path arm and the newer downside metric as well. Recent work used it with no smoothing or regularization to compare checkpoint runs against the larger reference run.
+`fixed_portfolio/q02_diff_density.py` is no longer just about `q02`. It was extended to support the glide path arm and the newer downside metric as well. Recent work used it with no smoothing or regularization to compare checkpoint runs against the larger reference run.
 
 ## Retirement Arm
 

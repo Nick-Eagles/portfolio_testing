@@ -1,4 +1,5 @@
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,15 @@ from plotnine import (
     theme_minimal,
 )
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from dataset_variants import ROOT, get_dataset_variant
+from fixed_portfolio.smoothing import (
+    get_checkpoint_output_parquet,
+    get_return_summary_parquet,
+)
 
 
 SIMULATION_LEVELS = [10_000, 20_000, 30_000, 40_000]
@@ -80,9 +89,8 @@ def load_difference_frame(
     glide_input_dir: Path | None,
 ) -> pd.DataFrame:
     if mode == "fixed_portfolio":
-        variant = get_dataset_variant(dataset)
-        summary_path = variant.data_dir / "portfolio_return_summary.parquet"
-        checkpoint_path = variant.data_dir / "portfolio_return_summary_checkpoints.parquet"
+        summary_path = get_return_summary_parquet(dataset)
+        checkpoint_path = get_checkpoint_output_parquet(dataset)
         if not summary_path.exists() or not checkpoint_path.exists():
             raise FileNotFoundError(
                 "Missing checkpoint or summary parquet. Run simulate_returns.py first."
@@ -172,14 +180,15 @@ def build_plot(
 
 
 def output_path(dataset: str, block_length: int, mode: str, metric: str) -> Path:
-    variant = get_dataset_variant(dataset)
     filename = (
         f"{metric}_diff_density_vs_50000_L{block_length}_all_horizons.pdf"
         if mode == "fixed_portfolio"
         else f"{metric}_diff_density_vs_50000_L{block_length}_glide_path_all_horizons.pdf"
     )
+    if mode == "fixed_portfolio":
+        return SCRIPT_DIR / "plots" / dataset / "convergence_diagnostics" / filename
     return (
-        variant.plots_dir
+        get_dataset_variant(dataset).plots_dir
         / "convergence_diagnostics"
         / filename
     )

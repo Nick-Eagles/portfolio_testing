@@ -1,4 +1,6 @@
 import argparse
+import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -13,19 +15,22 @@ from plotnine import (
     theme_minimal,
 )
 
-from convex_smoothing import (
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from fixed_portfolio.smoothing import (
     ASSET_COLORS,
     DATASET_VARIANTS,
     ROOT,
     SELECTED_HORIZONS,
     add_pure_asset_labels,
-    add_simplex_coordinates,
-    draw_simplex_outline,
     get_optimal_patterns_dir,
     get_pure_asset_dir,
     get_dataset_variant,
     load_smoothed_stats,
 )
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,7 +47,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def get_no_bonds_csv(dataset: str):
-    return get_dataset_variant(dataset).data_dir / "all_assets_vs_no_bonds_q02_summary.csv"
+    return SCRIPT_DIR / "outputs" / dataset / "all_assets_vs_no_bonds_q02_summary.csv"
 
 
 def compute_all_assets_vs_no_bonds(smoothed_stats: pd.DataFrame) -> pd.DataFrame:

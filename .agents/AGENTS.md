@@ -156,6 +156,8 @@ they are not active workflow entry points:
 - `dataset_variants.py`: dataset metadata and canonical paths.
 - `portfolio_helpers.py`: shared return columns, constants, and the 2% simplex
   grid.
+- `simplex_geometry.py`: simplex coordinate conversion and plotting outline
+  helpers shared by fixed-portfolio, glide-path, and retirement plots.
 - `build_asset_class_returns.py`: asset-return extraction when source data must
   be rebuilt.
 - `simulate_returns.py` and `path_simulation.py`: bootstrap/path-generation and

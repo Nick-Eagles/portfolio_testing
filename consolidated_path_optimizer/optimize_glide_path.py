@@ -33,7 +33,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 from core import (
     DEFAULT_BLOCK_LENGTH,
     DEFAULT_BISECTIONS,

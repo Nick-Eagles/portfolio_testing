@@ -10,6 +10,7 @@ from path_simulation import lower_quantiles_in_place
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
 
 
+FIXED_PORTFOLIO_OUTPUT_DIR = ROOT / "fixed_portfolio" / "outputs"
 BLOCK_LENGTHS = (3, 5, 10, 15, 20)
 MAX_HORIZON = 50
 NUM_SIMULATIONS = 50_000
@@ -55,11 +56,11 @@ def get_input_csv(dataset: str) -> Path:
 
 
 def get_output_parquet(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "portfolio_return_summary.parquet"
+    return FIXED_PORTFOLIO_OUTPUT_DIR / dataset / "portfolio_return_summary.parquet"
 
 
 def get_checkpoint_output_parquet(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "portfolio_return_summary_checkpoints.parquet"
+    return FIXED_PORTFOLIO_OUTPUT_DIR / dataset / "portfolio_return_summary_checkpoints.parquet"
 
 
 def load_returns(dataset: str) -> pd.DataFrame:

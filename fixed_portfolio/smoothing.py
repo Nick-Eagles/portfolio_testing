@@ -1,15 +1,20 @@
+import sys
 from pathlib import Path
 
-import math
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from portfolio_helpers import RETURN_COLUMNS
+from simplex_geometry import add_simplex_coordinates
 
 
+OUTPUT_DIR = SCRIPT_DIR / "outputs"
+PLOT_DIR = SCRIPT_DIR / "plots"
 DEFAULT_BLOCK_LENGTH = 10
 DEFAULT_HORIZON_BANDWIDTH = 0.17
 DEFAULT_PORTFOLIO_BANDWIDTH = 0.01
@@ -39,60 +44,31 @@ ASSET_COLORS = {
 
 
 def get_return_summary_parquet(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "portfolio_return_summary.parquet"
+    return OUTPUT_DIR / dataset / "portfolio_return_summary.parquet"
+
+
+def get_checkpoint_output_parquet(dataset: str) -> Path:
+    return OUTPUT_DIR / dataset / "portfolio_return_summary_checkpoints.parquet"
 
 
 def get_smoothed_stats_parquet(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "portfolio_smoothed_q02_stats.parquet"
+    return OUTPUT_DIR / dataset / "portfolio_smoothed_q02_stats.parquet"
 
 
 def get_smoothed_metadata_csv(dataset: str) -> Path:
-    return get_dataset_variant(dataset).data_dir / "portfolio_smoothed_q02_metadata.csv"
+    return OUTPUT_DIR / dataset / "portfolio_smoothed_q02_metadata.csv"
 
 
 def get_optimal_patterns_dir(dataset: str) -> Path:
-    return get_dataset_variant(dataset).plots_dir / "optimal_portfolio_patterns"
+    return PLOT_DIR / dataset / "optimal_portfolio_patterns"
 
 
 def get_pure_asset_dir(dataset: str) -> Path:
-    return get_dataset_variant(dataset).plots_dir / "pure_asset_EDA"
+    return PLOT_DIR / dataset / "pure_asset_EDA"
 
 
 def get_smoothing_diagnostics_dir(dataset: str) -> Path:
-    return get_dataset_variant(dataset).plots_dir / "smoothing_diagnostics"
-
-
-def add_simplex_coordinates(frame: pd.DataFrame) -> pd.DataFrame:
-    result = frame.copy()
-    result["simplex_x"] = 0.5 * result["stock_weight"] + result["t_bill_weight"]
-    result["simplex_y"] = (math.sqrt(3) / 2) * result["stock_weight"]
-    return result
-
-
-def draw_simplex_outline(ax) -> None:
-    vertices = np.array(
-        [
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [0.5, math.sqrt(3) / 2],
-            [0.0, 0.0],
-        ]
-    )
-    ax.plot(vertices[:, 0], vertices[:, 1], color="black", linewidth=0.8)
-    ax.text(0.0, -0.05, "100% Bonds", ha="center", va="top", fontsize=11)
-    ax.text(1.0, -0.05, "100% T-Bills", ha="center", va="top", fontsize=11)
-    ax.text(
-        0.5,
-        math.sqrt(3) / 2 + 0.04,
-        "100% Stocks",
-        ha="center",
-        va="bottom",
-        fontsize=11,
-    )
-    ax.set_xlim(-0.08, 1.08)
-    ax.set_ylim(-0.08, math.sqrt(3) / 2 + 0.08)
-    ax.set_aspect("equal")
-    ax.axis("off")
+    return PLOT_DIR / dataset / "smoothing_diagnostics"
 
 
 def make_smoothing_subtitle(

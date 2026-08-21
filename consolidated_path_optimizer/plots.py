@@ -23,7 +23,7 @@ from core import (
     per_horizon_scores,
     weights_to_frame,
 )
-from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 
 PATH_COLORS = {
     "optimized": "#1f77b4",

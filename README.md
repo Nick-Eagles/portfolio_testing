@@ -23,18 +23,17 @@ TODO
 The repository is organized more like a research workspace than a polished
 package. The main pieces are:
 
-- `data/`: source data and generated datasets. The original Simba workbook
-  lives here, along with derived real-return series and generated outputs under
-  `data/<dataset>/`. The two main dataset variants are `from_1927` and
-  `full_history`.
-- `plots/`: generated figures for the main fixed-portfolio, glide-path, and
-  retirement workflows, again split by dataset.
+- `data/`: source data and shared derived datasets. The original Simba workbook
+  lives here, along with derived real-return series under `data/<dataset>/`.
+  The two main dataset variants are `from_1927` and `full_history`.
+- `plots/`: generated figures for older root-level glide-path workflows, split
+  by dataset.
 - Root-level helper modules such as `portfolio_helpers.py`,
-  `dataset_variants.py`, `path_simulation.py`, and `convex_smoothing.py` hold
-  shared constants, dataset paths, bootstrap/path simulation utilities, simplex
-  portfolio grids, and smoothing helpers.
+  `dataset_variants.py`, `path_simulation.py`, `simulate_returns.py`, and
+  `simplex_geometry.py` hold shared constants, dataset paths, bootstrap/path
+  simulation utilities, simplex portfolio grids, and simplex plotting helpers.
 
-The older fixed-portfolio workflow lives mostly in root-level scripts:
+The older fixed-portfolio workflow now lives in `fixed_portfolio/`:
 
 - `build_asset_class_returns.py` extracts real stock, bond, and T-bill returns
   from the source workbook.
@@ -42,11 +41,14 @@ The older fixed-portfolio workflow lives mostly in root-level scripts:
   over the three-asset simplex. It uses stationary circular block resampling:
   simulated return paths usually continue to the next historical year, but
   occasionally jump to a new random year, wrapping around the historical
-  dataset.
-- `build_smoothed_stats.py`, `plot_smoothed_q02_results.py`, and
-  `plot_smoothed_optimal_path.py` smooth and visualize the fixed-portfolio
-  downside-return surfaces. This arm is mainly based on lower-tail return
-  metrics such as `q02`.
+  dataset. It remains top-level because newer workflows reuse its bootstrap
+  helpers, but its fixed-portfolio summary outputs are written under
+  `fixed_portfolio/outputs/<dataset>/`.
+- `fixed_portfolio/build_smoothed_stats.py`,
+  `fixed_portfolio/plot_smoothed_q02_results.py`, and
+  `fixed_portfolio/plot_smoothed_optimal_path.py` smooth and visualize the
+  fixed-portfolio downside-return surfaces. This arm is mainly based on
+  lower-tail return metrics such as `q02`.
 
 The glide-path work has several generations:
 

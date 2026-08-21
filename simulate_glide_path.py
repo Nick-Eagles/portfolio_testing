@@ -5,9 +5,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from convex_smoothing import (
-    add_simplex_coordinates,
-)
 from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from evaluate_greedy_algorithm.best_run_registry import maybe_record_best_run
 from path_simulation import (
@@ -18,6 +15,7 @@ from path_simulation import (
     zscore_values,
 )
 from portfolio_helpers import MAX_HORIZON, RETURN_COLUMNS, generate_portfolio_weights
+from simplex_geometry import add_simplex_coordinates
 from simulate_returns import (
     generate_balanced_initial_year_indexes,
     generate_resampled_paths,

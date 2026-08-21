@@ -29,7 +29,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 REFERENCE_PATH_DIR = PROJECT_ROOT / "data" / "retirement"
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 from dataset_variants import DATASET_VARIANTS, ROOT
 from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS

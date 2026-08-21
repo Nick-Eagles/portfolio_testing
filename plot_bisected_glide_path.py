@@ -5,12 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from convex_smoothing import (
-    ROOT,
-    add_simplex_coordinates,
-    draw_simplex_outline,
-)
-from dataset_variants import DATASET_VARIANTS, get_dataset_variant
+from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from path_simulation import mean_of_worst_tail_fraction
 from portfolio_helpers import RETURN_COLUMNS
 from simulate_bisected_glide_path import make_rng
@@ -19,6 +14,7 @@ from simulate_returns import (
     generate_resampled_paths,
     load_returns,
 )
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 
 
 DEFAULT_HEX_BISECTION_LEVEL = 2

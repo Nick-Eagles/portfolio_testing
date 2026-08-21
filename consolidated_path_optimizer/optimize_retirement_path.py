@@ -28,7 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from convex_smoothing import add_simplex_coordinates, draw_simplex_outline
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 from path_simulation import project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
 from retirement_block.common import (

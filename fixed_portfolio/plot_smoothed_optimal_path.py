@@ -1,20 +1,26 @@
 import argparse
+import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from convex_smoothing import (
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from fixed_portfolio.smoothing import (
     DATASET_VARIANTS,
     DEFAULT_PATH_DISTANCE_LAMBDA,
     HORIZON_LABEL_OFFSETS,
     ROOT,
     SELECTED_HORIZONS,
     choose_jointly_optimized_path,
-    draw_simplex_outline,
     get_optimal_patterns_dir,
     get_dataset_variant,
     load_smoothed_stats,
 )
+from simplex_geometry import draw_simplex_outline
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,11 +46,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def get_path_csv(dataset: str):
-    return get_dataset_variant(dataset).data_dir / "smoothed_optimal_path.csv"
+    return SCRIPT_DIR / "outputs" / dataset / "smoothed_optimal_path.csv"
 
 
 def get_return_cost_csv(dataset: str):
-    return get_dataset_variant(dataset).data_dir / "smoothed_optimal_path_return_cost.csv"
+    return SCRIPT_DIR / "outputs" / dataset / "smoothed_optimal_path_return_cost.csv"
 
 
 def compute_smoothed_return_cost(

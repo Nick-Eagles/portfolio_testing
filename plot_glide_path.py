@@ -4,15 +4,19 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from convex_smoothing import (
-    DATASET_VARIANTS,
-    HORIZON_LABEL_OFFSETS,
-    ROOT,
-    SELECTED_HORIZONS,
-    add_simplex_coordinates,
-    draw_simplex_outline,
-    get_dataset_variant,
-)
+from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
+
+SELECTED_HORIZONS = [1, 5, 10, 20, 30, 40, 50]
+HORIZON_LABEL_OFFSETS = {
+    1: (0.0, 0.04),
+    5: (0.035, 0.03),
+    10: (0.04, 0.0),
+    20: (0.04, -0.01),
+    30: (0.035, -0.025),
+    40: (-0.04, -0.02),
+    50: (-0.045, 0.025),
+}
 
 
 def parse_args() -> argparse.Namespace:

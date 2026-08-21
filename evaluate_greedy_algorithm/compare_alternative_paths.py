@@ -11,8 +11,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from convex_smoothing import ROOT, add_simplex_coordinates, draw_simplex_outline
-from dataset_variants import DATASET_VARIANTS, get_dataset_variant
+from dataset_variants import DATASET_VARIANTS, ROOT, get_dataset_variant
 from evaluate_greedy_algorithm.best_run_registry import load_best_run
 from path_evaluation import evaluate_glide_path_weight_path
 from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
@@ -37,6 +36,7 @@ from simulate_returns import (
     generate_resampled_paths,
     load_returns,
 )
+from simplex_geometry import add_simplex_coordinates, draw_simplex_outline
 
 
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
