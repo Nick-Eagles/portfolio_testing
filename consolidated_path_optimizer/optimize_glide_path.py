@@ -46,6 +46,7 @@ from core import (
     DEFAULT_LEARNING_RATE,
     DEFAULT_NUM_SIMULATIONS,
     DEFAULT_RANDOM_STARTS,
+    DEFAULT_SEED,
     DEFAULT_SMOOTHING_BANDWIDTH,
     DEFAULT_SMOOTHING_STRENGTH,
     DEFAULT_START_SEED,
@@ -65,7 +66,6 @@ from core import (
 from common import huber_curvature_penalty_and_gradient, smooth_path_between_gradient_steps
 from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
 from portfolio_helpers import generate_portfolio_weights
-from simulate_glide_path import DEFAULT_SEED
 from plots import (
     plot_end_paths,
     plot_gradient_snapshots,

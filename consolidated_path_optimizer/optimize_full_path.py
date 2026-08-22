@@ -24,6 +24,7 @@ from core import (
     DEFAULT_LEARNING_RATE,
     DEFAULT_NUM_SIMULATIONS,
     DEFAULT_RANDOM_STARTS,
+    DEFAULT_SEED,
     DEFAULT_SMOOTHING_BANDWIDTH,
     DEFAULT_SMOOTHING_STRENGTH,
     DEFAULT_START_SEED,
@@ -54,7 +55,6 @@ from plots import (
     plot_optimization_traces,
     plot_validation_traces,
 )
-from simulate_glide_path import DEFAULT_SEED
 
 DEFAULT_ITERATIONS = 15
 

@@ -32,13 +32,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from path_simulation import mean_of_worst_tail_fraction, project_rows_to_simplex
 from portfolio_helpers import RETURN_COLUMNS, generate_portfolio_weights
-from simulate_glide_path import BLOCK_LENGTH as DEFAULT_BLOCK_LENGTH, DEFAULT_SEED
 from simulate_returns import (
     generate_balanced_initial_year_indexes,
     generate_resampled_paths,
     load_returns,
 )
 
+DEFAULT_BLOCK_LENGTH = 10
+DEFAULT_SEED = 20260616
 MAX_HORIZON = 50
 WORST_TAIL_FRACTION = 0.04
 WEIGHT_COLUMNS = ["stock_weight", "bond_weight", "t_bill_weight"]
