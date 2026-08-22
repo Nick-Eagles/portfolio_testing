@@ -1,7 +1,1 @@
 *.xlsx
-*.xls
-*.csv
-!retirement/*.csv
-*.gz
-*.tmp
-*.parquet
