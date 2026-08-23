@@ -19,4 +19,14 @@ Results we have so far:
 - Curvature-penalty 0.00025 seemed to be a sweet spot of good score and lack of unrealistic jaggedness in the paths. The other curvature parameter was tuned subjectively (ability to control jaggedness at the proper length scale)
 - `--early-stop` produced worse scores for good hyperparameters and had less predictable impact on optimization as a function of hyperparameters, so it was not pursued further.
 
-
+- Project goals
+- Dataset and simulation strategy
+  - dataset
+  - block bootstrapping
+  - objective and how it relates to risk
+  - why glide path?
+- Optimization algorithms
+- Why trust my results?
+  - ML approach
+  - validation against Vanguard + Fidelity
+- Web app

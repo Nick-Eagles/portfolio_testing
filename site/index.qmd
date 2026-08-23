@@ -1,0 +1,45 @@
+---
+title: "Home"
+---
+
+# Data-Driven Optimal Portfolio Selection Project
+
+This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor's particular situation.
+
+I have separate pages diving into the dataset, statistical framing, optimization strategy, and even an interactive app for exploring results.
+
+## Explore the project
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### [Project Goals](project_goals.qmd)
+
+A basic overview of the project framing, and what financial questions I wanted to answer 
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### [Dataset and Simulation Strategy](dataset_simulation.qmd)
+
+Details covering the historical dataset and how I sampled it to rank portfolio choices
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### [Optimization Algorithms](optimization.qmd)
+
+A mathematical description of the algorithm I designed to reliably arrive at an optimal glide path
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### [Why Trust My Results?](why_trust.qmd)
+
+The ML techniques and validation strategy I employed to produce robust, trustworthy results
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### [Web App](web_app.qmd)
+
+An interactive in-browser app to explore my results under different settings
+:::
+
+:::

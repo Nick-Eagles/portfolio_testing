@@ -1,6 +1,6 @@
 # Data-Driven Optimal Portfolio Selection
 
-This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement, taxable contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor's particular situation.
+This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor's particular situation.
 
 This project and README are a work in progress, with several attempted algorithms/optimization strategies scattered in various directories-- see [the current-organization section](#current-organization) for more details.
 

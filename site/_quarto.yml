@@ -1,0 +1,25 @@
+project:
+  type: website
+  output-dir: ../docs
+
+website:
+  title: "Data-Driven Optimal Portfolio Selection Project"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: project_goals.qmd
+        text: Project Goals
+      - href: dataset_simulation.qmd
+        text: Dataset and Simulation Strategy
+      - href: optimization.qmd
+        text: Optimization Algorithms
+      - href: why_trust.qmd
+        text: Why Trust My Results?
+      - href: web_app.qmd
+        text: Web App
+
+format:
+  html:
+    theme: cosmo
+    self-contained: false
