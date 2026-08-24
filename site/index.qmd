@@ -37,6 +37,12 @@ The ML techniques and validation strategy I employed to produce robust, trustwor
 :::
 
 ::: {.g-col-12 .g-col-md-6}
+### [Core Findings](core_findings.qmd)
+
+What interesting results did this project produce?
+:::
+
+::: {.g-col-12 .g-col-md-6}
 ### [Web App](web_app.qmd)
 
 An interactive in-browser app to explore my results under different settings
