@@ -1,0 +1,48 @@
+---
+title: "Why Trust My Results?"
+---
+
+I used a combination of standard machine-learning best practices and validation against
+external data to ensure the results found by this project were robust and trustworthy.
+
+## Machine Learning Approach
+
+The ~100-year dataset is fairly small, and I had to try different
+[optimization algorithms](optimization.qmd) and hyperparameters before arriving at an
+effective strategy. The basic idea was to treat the glide path as a machine learning
+model, and employ standard best practices.
+
+### Cross Validation
+
+The small ~100-year dataset with temporally autocorrelated observations presented
+challenges for employing standard k-fold cross validation. A naive initial approach would be
+to split time periods into 5 training and validation folds; however, this leaves just 20
+years for validation in each fold. Economic regimes can vary dramatically between periods
+this small, and the optimal strategy may not be expected to generalize from training to
+validation with this approach.
+
+I employed a modified 5-fold cross validation where training/validation was split 60/40.
+These sets could partially overlap against folds; the first year for each training chunk
+was linearly sampled from the full ~100-year dataset, and 2025 was circularly connected to
+1927 when forming the chunks. While variation across folds is somewhat artifically reduced
+compared to standard k-fold cross validation, this approach makes better use of the limited
+number of total years, and validation sets are sufficiently large.
+
+### Hyperparameter Tuning
+
+There were quite a few hyperparameters to tune:
+
+- optimization algorithm
+- number of bisections
+- learning rate
+- number of gradient steps
+- convex-smoothing strength
+- Huber curvature penalty
+
+A full grid search was too expensive; I opted to greedily tune each parameter individually.
+After arriving in a good range, I verified that perturbations of any hyperparameter
+resulted in worse scores for validation performance or similarity of optimized paths across
+folds:
+
+TODO: the plot showing this
+
