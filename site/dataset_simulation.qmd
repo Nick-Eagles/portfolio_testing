@@ -2,29 +2,59 @@
 title: "Dataset and Simulation Strategy"
 ---
 
-## Dataset
+# Dataset
 
 This project is made possible by historical annual-returns data from [Simba's Backtesting Spreadsheet](https://www.bogleheads.org/wiki/Simba%27s_backtesting_spreadsheet). Specifically, I make use of the `Data Series` tab, and real returns from the `TSM (US)`, `TBM (US)`, and `T-Bills TR` columns. I use only the data between 1927 and 2025, as earlier data are either simulated or otherwise statistically estimated.
 
-## Objective
+# Objective
+
+## Before Age 65
 
 ### Basic Framing
 
-To determine the best portfolio at a given age or horizon, I define an objective function and optimize it (see [optimization algorithms](optimization_algorithms.qmd)). For a given age or horizon, the objective is the mean annualized real returns among the worst 4% of simulated Monte Carlo outcomes along the remainder of the glide path. While the objective is explicitly downside-aware, optimal investments still become more aggressive for longer horizons.
+To determine the best portfolio at a given age or horizon, I define an objective function and optimize it (see [optimization algorithms](optimization_algorithms.qmd)).
+For a given age or horizon before age 65, the objective is the mean annualized real returns among the worst 4% of simulated Monte Carlo outcomes along the remainder of the
+glide path. While the objective is explicitly downside-aware, optimal investments still become more aggressive for longer horizons.
 
 ### Scoring an Entire Glide Path
 
 Since the product of the project is a glide path, the objective must be generalized at this level rather than at the level of an individual horizon or age. In practice, I use an exponentially weighted sum of objectives for each horizon/age:
 
-TODO: formula here for retirement and non-retirement
+TODO: formula here for retirement and non-retirement. Make it clear that pre-retirement still depends on a linear combination of post-retirement outcomes
 
-In practice, I choose a small ALPHA of TODO, which is intentionally selected so that optimization prioritizes shorter horizons. The idea is that the optimal glide path must be *nested*: someone investing for two years should have the same portfolio in their last year as a one-year investor. In fact, as TODO FORMULA ALPHA -> 0, optimization's maximum perfectly approaches this nested property.
+In practice, I choose a small ALPHA of TODO, which is intentionally selected so that optimization prioritizes shorter horizons. The idea is that the optimal glide path must be
+*nested*: someone investing for two years should have the same portfolio in their last year as a one-year investor. In fact, as TODO FORMULA ALPHA -> 0, optimization's maximum
+perfectly approaches this nested property.
 
-## Simulation Strategy
+## After Age 65
+
+Since cash flows are assumed to be fixed in retirement (annual withdrawals + constant expected gains/losses from investments), I opt to find the best fixed allocation, as
+opposed to a glide path, for the post-retirement block (ages 65-90 here).
+
+### Main Objective
+
+The best portfolio was defined as the one maximizing the mean among the worst 2% of simulated Monte Carlo returns. Why 2% instead of the 4% used in the pre-retirement and
+non-retirement glide paths? My intuition for the stricter rule comes from the opinion that depleting life savings is more disastrous than achieving suboptimal returns
+prior to retirement, whether in a retirement or non-retirement account. Note that constant annual withdrawals were assumed in the post-retirement block (more on this in the
+next section).
+
+### Determining Annual Withdrawals
+
+Common retirement recommendations advocate for an investor to withdraw 4% of accumulated retirement savings in a given year, adjusting the nominal amount by inflation.
+This project aimed to test that 4% number using a similar framing of risk as the glide-path arm. Specifically, I required that the average among the worst 2% of outcomes
+for the optimal portfolio not fully deplete retirement savings. Interestingly, the 4% rule results in bankruptcy according to this framing; a value close to 3.5% (the value
+selected for modeling pre-retirement glide paths) leaves a small buffer at 90.
+
+TODO: show the plot visually demonstrating that 3.5% is a good choice
+
+As a caveat to my results, I make the strict assumption that investors immediately withdraw some retirement savings at age 65; in practice, research shows typical investors
+often begin withdrawing several years later.
+
+# Simulation Strategy
 
 Because I only had 99 years to work with, and data are substantially autocorrelated (particularly within economic regimes), I opted to employ a form of bootstrapping.
 
-### Circular Block Bootstrapping
+## Circular Block Bootstrapping
 
 To generate Monte Carlo simulations of the historical data, I use a circular block-bootstrapping algorithm. The idea is to produce novel but plausible sequences of annual-returns data, expanding the limited reference data but preserving sequential dependencies. For a given Monte Carlo run, here's the algorithm:
 
@@ -33,7 +63,7 @@ To generate Monte Carlo simulations of the historical data, I use a circular blo
 
 Annualized returns are evaluated for a given portfolio along the resulting series of years, with the boundary at 2025 circularly connected to the first year, 1927. This procedure is followed for each year along the investment period until horizon 50 (non-retirement) or age 90 (retirement). That probability of 1/10 produces an expected *block length* of 10, with block lengths geometrically distributed. The choice of `block_length = 10` was arbitrary and based on intuition; longer block lengths are better at preserving real relationships among data across years, but smaller block lengths offer the opportunity to essentially generate a larger (and even potentially more accurate!) synthetic dataset.
 
-### Validation vs Final Runs
+## Validation vs Final Runs
 
 To select optimization hyperparameters (see [optimization algorithms](optimization_algorithms.qmd)), 2000 Monte Carlo simulations were generated for both training and validation slices of the data. For the final runs on the full data, 20,000 runs were simulated.
 

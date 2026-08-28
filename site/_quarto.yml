@@ -16,6 +16,8 @@ website:
         text: Optimization Algorithms
       - href: why_trust.qmd
         text: Why Trust My Results?
+      - href: core_results.qmd
+        text: Core Results
       - href: web_app.qmd
         text: Web App
 

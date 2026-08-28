@@ -1,0 +1,10 @@
+---
+title: "Core Results"
+---
+
+The main output of this project is a guideline (glide path) for investment strategy for retirement and non-retirement accounts.
+
+## Retirement
+
+TODO: simplex and ribbon-plot depictions of the chosen glide path
+
