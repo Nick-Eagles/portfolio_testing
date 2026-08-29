@@ -59,6 +59,7 @@ APPROACH_COLORS = {
     "Fidelity": "#2ca02c",
     "Best Random": "#d95f02",
 }
+DOC_EXCLUDED_APPROACHES = {"Best Random"}
 METRICS = [
     ("terminal_worst_1pct_mean", "Worst 1%"),
     ("terminal_worst_2pct_mean", "Worst 2%"),
@@ -102,6 +103,12 @@ def display_path(path: Path) -> Path:
         return path.relative_to(ROOT)
     except ValueError:
         return path
+
+
+def save_pdf_and_png(fig: plt.Figure, output_pdf: Path, dpi: int = 220) -> None:
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_pdf)
+    fig.savefig(output_pdf.with_suffix(".png"), dpi=dpi)
 
 
 def make_rng(seed: int, dataset: str) -> np.random.Generator:
@@ -453,6 +460,85 @@ def plot_pre_retirement_age_relative_means(data: pd.DataFrame, output_dir: Path)
     print(f"Wrote {display_path(output_pdf)}")
 
 
+def plot_pre_retirement_age_relative_means_doc(data: pd.DataFrame, output_dir: Path) -> None:
+    output_pdf = output_dir / "experimental_comparison_pre_retirement_grid_age_relative_mean_doc.pdf"
+    relative = data[~data["approach"].isin(DOC_EXCLUDED_APPROACHES)].copy()
+    for metric_column, _panel_title in METRICS:
+        grouped = relative.groupby("starting_age")[metric_column]
+        mean = grouped.transform("mean")
+        relative[metric_column] = (relative[metric_column] - mean) / mean.where(mean != 0, 1.0)
+
+    with plt.rc_context({"font.size": 13, "axes.titlesize": 14}):
+        fig, axes = plt.subplots(3, 2, figsize=(12.5, 11.2), constrained_layout=True, sharex=True)
+        axes_flat = axes.flatten()
+        for ax, (metric_column, panel_title) in zip(axes_flat, METRICS):
+            for approach, approach_data in relative.groupby("approach", sort=False):
+                ax.plot(
+                    approach_data["starting_age"],
+                    approach_data[metric_column],
+                    color=APPROACH_COLORS.get(approach),
+                    linewidth=2.4,
+                    label=approach,
+                )
+            ax.axhline(0.0, color="#777777", linewidth=0.9, alpha=0.65)
+            ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+            ax.set_title(panel_title, fontweight="bold")
+            ax.set_xlim(MIN_STARTING_AGE, RETIREMENT_AGE)
+            ax.grid(alpha=0.2)
+        for ax in axes[-1]:
+            ax.set_xlabel("Starting age")
+        for ax in axes[:, 0]:
+            ax.set_ylabel("Percent above/below age mean")
+        handles, labels = axes_flat[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            ncol=3,
+            frameon=False,
+            bbox_to_anchor=(0.5, 1.01),
+        )
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
+    print(f"Wrote {display_path(output_pdf)} and {display_path(output_pdf.with_suffix('.png'))}")
+
+
+def plot_pre_retirement_metrics_doc(data: pd.DataFrame, output_dir: Path) -> None:
+    output_pdf = output_dir / "experimental_comparison_pre_retirement_grid_doc.pdf"
+    filtered = data[~data["approach"].isin(DOC_EXCLUDED_APPROACHES)].copy()
+    with plt.rc_context({"font.size": 13, "axes.titlesize": 14}):
+        fig, axes = plt.subplots(3, 2, figsize=(12.5, 11.2), constrained_layout=True, sharex=True)
+        axes_flat = axes.flatten()
+        for ax, (metric_column, panel_title) in zip(axes_flat, METRICS):
+            for approach, approach_data in filtered.groupby("approach", sort=False):
+                ax.plot(
+                    approach_data["starting_age"],
+                    approach_data[metric_column],
+                    color=APPROACH_COLORS.get(approach),
+                    linewidth=2.4,
+                    label=approach,
+                )
+            ax.set_title(panel_title, fontweight="bold")
+            ax.set_xlim(MIN_STARTING_AGE, RETIREMENT_AGE)
+            ax.grid(alpha=0.2)
+        for ax in axes[-1]:
+            ax.set_xlabel("Starting age")
+        for ax in axes[:, 0]:
+            ax.set_ylabel("Mean wealth across ages 65-90")
+        handles, labels = axes_flat[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            ncol=3,
+            frameon=False,
+            bbox_to_anchor=(0.5, 1.01),
+        )
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
+    print(f"Wrote {display_path(output_pdf)} and {display_path(output_pdf.with_suffix('.png'))}")
+
+
 def plot_post_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
     output_pdf = output_dir / "experimental_comparison_post_retirement_grid.pdf"
     fig, axes = plt.subplots(3, 2, figsize=(12, 11), constrained_layout=True)
@@ -471,6 +557,29 @@ def plot_post_retirement_metrics(data: pd.DataFrame, output_dir: Path) -> None:
     fig.savefig(output_pdf)
     plt.close(fig)
     print(f"Wrote {display_path(output_pdf)}")
+
+
+def plot_post_retirement_metrics_doc(data: pd.DataFrame, output_dir: Path) -> None:
+    output_pdf = output_dir / "experimental_comparison_post_retirement_grid_doc.pdf"
+    with plt.rc_context({"font.size": 16, "axes.titlesize": 17}):
+        fig, axes = plt.subplots(2, 3, figsize=(9, 5.6), constrained_layout=True)
+        axes_flat = axes.flatten()
+        approach_order = [approach for approach in APPROACH_COLORS if approach in set(data["approach"])]
+        for index, (ax, (metric_column, panel_title)) in enumerate(zip(axes_flat, METRICS)):
+            metric_values = data.set_index("approach")[metric_column].reindex(approach_order)
+            bar_colors = [APPROACH_COLORS[approach] for approach in approach_order]
+            ax.bar(approach_order, metric_values.to_numpy(dtype=float), color=bar_colors, width=0.68)
+            ax.set_title(panel_title, fontweight="bold")
+            if index < 3:
+                ax.tick_params(axis="x", labelbottom=False)
+            else:
+                ax.tick_params(axis="x", labelrotation=90)
+            ax.grid(axis="y", alpha=0.2)
+        for ax in axes[:, 0]:
+            ax.set_ylabel("Terminal wealth ratio")
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
+    print(f"Wrote {display_path(output_pdf)} and {display_path(output_pdf.with_suffix('.png'))}")
 
 
 def plot_random_paths(random_paths: dict[str, pd.DataFrame], output_dir: Path) -> None:
@@ -517,6 +626,9 @@ def write_outputs(
     plot_pre_retirement_metrics(pre_retirement, plot_dir)
     plot_pre_retirement_age_relative_means(pre_retirement, plot_dir)
     plot_post_retirement_metrics(post_retirement, plot_dir)
+    plot_pre_retirement_metrics_doc(pre_retirement, plot_dir)
+    plot_pre_retirement_age_relative_means_doc(pre_retirement, plot_dir)
+    plot_post_retirement_metrics_doc(post_retirement, plot_dir)
     plot_random_paths(random_paths, plot_dir)
 
 

@@ -33,6 +33,13 @@ PATH_COLORS = {
 HORIZON_MARKERS = tuple(range(10, 51, 10))
 HORIZON_CMAP = "viridis"
 HORIZON_NORM = plt.Normalize(min(HORIZON_MARKERS), max(HORIZON_MARKERS))
+ALLOCATION_COLORS = ["#2c7fb8", "#7fcdbb", "#edf8b1"]
+
+
+def save_pdf_and_png(fig: plt.Figure, output_pdf: Path, dpi: int = 220) -> None:
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_pdf)
+    fig.savefig(output_pdf.with_suffix(".png"), dpi=dpi)
 
 
 def load_strategies(dataset: str, path_csv: Path) -> dict[str, pd.DataFrame]:
@@ -133,6 +140,105 @@ def plot_weights_by_horizon(path_frame: pd.DataFrame, output_pdf: Path) -> None:
     ax.legend(loc="center right", frameon=False)
     fig.savefig(output_pdf)
     plt.close(fig)
+
+
+def plot_allocation_area(
+    path_frame: pd.DataFrame,
+    output_pdf: Path,
+    x_column: str,
+    x_label: str,
+    title: str,
+    base_size: float = 18,
+) -> None:
+    ordered = path_frame.sort_values(x_column)
+    with plt.rc_context({"font.size": base_size, "axes.titlesize": base_size * 1.15}):
+        fig, ax = plt.subplots(figsize=(11, 6.2), constrained_layout=True)
+        ax.stackplot(
+            ordered[x_column],
+            ordered["stock_weight"] * 100,
+            ordered["bond_weight"] * 100,
+            ordered["t_bill_weight"] * 100,
+            labels=["Stocks", "Bonds", "T-Bills"],
+            colors=ALLOCATION_COLORS,
+            alpha=0.92,
+        )
+        ax.set_title(title, fontweight="bold")
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("Allocation (%)")
+        ax.set_ylim(0, 100)
+        ax.set_xlim(ordered[x_column].min(), ordered[x_column].max())
+        ax.grid(axis="y", alpha=0.2)
+        handles, labels = ax.get_legend_handles_labels()
+        fig.legend(handles, labels, loc="outside upper center", ncol=3, frameon=False)
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
+
+
+def plot_final_simplex_doc(
+    path_frame: pd.DataFrame,
+    output_pdf: Path,
+    value_column: str,
+    colorbar_label: str,
+    title: str,
+    max_value: int | None = None,
+    base_size: float = 15,
+) -> None:
+    ordered = path_frame.sort_values(value_column)
+    coords_input = ordered.rename(columns={value_column: "horizon"}).copy()
+    coords_input["_doc_label_value"] = ordered[value_column].to_numpy()
+    coords = add_simplex_coordinates(coords_input)
+    values = ordered[value_column].astype(int)
+    decade_mask = values % 10 == 0
+    norm = plt.Normalize(values.min(), max_value or values.max())
+
+    with plt.rc_context({"font.size": base_size, "axes.titlesize": base_size * 1.05}):
+        fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
+        draw_simplex_outline(ax)
+        ax.plot(
+            coords["simplex_x"],
+            coords["simplex_y"],
+            color="black",
+            linewidth=1.9,
+            zorder=3,
+        )
+        scatter = ax.scatter(
+            coords.loc[~decade_mask, "simplex_x"],
+            coords.loc[~decade_mask, "simplex_y"],
+            c=values.loc[~decade_mask],
+            cmap=HORIZON_CMAP,
+            norm=norm,
+            s=28,
+            alpha=0.85,
+            zorder=4,
+        )
+        ax.scatter(
+            coords.loc[decade_mask, "simplex_x"],
+            coords.loc[decade_mask, "simplex_y"],
+            color="white",
+            edgecolor="black",
+            linewidth=0.8,
+            s=64,
+            zorder=5,
+        )
+        for _, row in coords.loc[decade_mask].iterrows():
+            ax.annotate(
+                f"{int(row['_doc_label_value'])}",
+                xy=(row["simplex_x"], row["simplex_y"]),
+                xytext=(6, 6),
+                textcoords="offset points",
+                ha="left",
+                va="bottom",
+                fontsize=base_size * 0.72,
+                fontweight="bold",
+                color="black",
+                zorder=6,
+            )
+        ax.set_title(title, fontweight="bold")
+        ax.set_aspect("equal")
+        colorbar = fig.colorbar(scatter, ax=ax, shrink=0.82)
+        colorbar.set_label(colorbar_label)
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
 
 
 def plot_per_horizon_scores(

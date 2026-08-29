@@ -37,6 +37,13 @@ from simulate_returns import generate_balanced_initial_year_indexes, generate_re
 DEFAULT_NUM_RATES = 10
 DEFAULT_MIN_WITHDRAWAL_RATE = 0.03
 DEFAULT_MAX_WITHDRAWAL_RATE = 0.04
+DOC_WITHDRAWAL_RATE = 0.035
+
+
+def save_pdf_and_png(fig: plt.Figure, output_pdf: Path, dpi: int = 220) -> None:
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_pdf)
+    fig.savefig(output_pdf.with_suffix(".png"), dpi=dpi)
 
 
 def parse_args() -> argparse.Namespace:
@@ -165,6 +172,55 @@ def plot_sweep(summary: pd.DataFrame, output_pdf: Path, dataset: str, num_simula
     plt.close(fig)
 
 
+def plot_sweep_doc(summary: pd.DataFrame, output_pdf: Path, dataset: str, num_simulations: int) -> None:
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    x = summary["withdrawal_rate"].to_numpy(dtype=float) * 100
+    y = summary["best_bottom_2pct_terminal_wealth_ratio"].to_numpy(dtype=float)
+    highlight_x = DOC_WITHDRAWAL_RATE * 100
+    highlight_y = float(np.interp(highlight_x, x, y))
+    dataset_label = dataset.replace("_", " ")
+
+    with plt.rc_context({"font.size": 15, "axes.titlesize": 17}):
+        fig, ax = plt.subplots(figsize=(10.5, 6.2), constrained_layout=True)
+        ax.plot(
+            x,
+            y,
+            color="black",
+            linewidth=2.4,
+            marker="o",
+            markersize=5.5,
+        )
+        ax.axhline(0.0, color="#555555", linewidth=1.2, linestyle=":", alpha=0.85)
+        ax.scatter(
+            [highlight_x],
+            [highlight_y],
+            color="#1f77b4",
+            edgecolor="white",
+            linewidth=0.9,
+            s=190,
+            marker="*",
+            zorder=5,
+        )
+        ax.annotate(
+            "3.5%",
+            xy=(highlight_x, highlight_y),
+            xytext=(10, 12),
+            textcoords="offset points",
+            color="#1f77b4",
+            fontweight="bold",
+        )
+        ax.set_title(
+            "Best Bottom-2% Terminal Wealth Ratio vs Withdrawal Rate\n"
+            f"{dataset_label}; {num_simulations:,} shared bootstrap paths; L={BLOCK_LENGTH}",
+            fontweight="bold",
+        )
+        ax.set_xlabel("Annual real withdrawal rate (%)")
+        ax.set_ylabel("Best bottom-2% mean terminal wealth ratio")
+        ax.grid(alpha=0.25)
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     returns = load_returns(args.dataset)
@@ -182,8 +238,10 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output_csv = args.output_dir / "withdrawal_rate_sweep.csv"
     output_pdf = args.plot_dir / "withdrawal_rate_sweep.pdf"
+    output_doc_pdf = args.plot_dir / "withdrawal_rate_sweep_doc.pdf"
     summary.to_csv(output_csv, index=False)
     plot_sweep(summary, output_pdf, args.dataset, args.num_simulations)
+    plot_sweep_doc(summary, output_doc_pdf, args.dataset, args.num_simulations)
     print(f"wrote {output_csv}")
     print(f"wrote {output_pdf}")
     print(summary.to_string(index=False))
@@ -191,4 +249,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -61,7 +61,7 @@ from core import (
     DEFAULT_SMOOTHING_STRENGTH,
     DEFAULT_YEAR_CV_TRAIN_FRACTION,
 )
-from plots import plot_validation_traces
+from plots import plot_allocation_area, plot_final_simplex_doc, plot_validation_traces
 
 OPTIMIZED_START_AGE = MIN_STARTING_AGE
 FIXED_ANCHOR_AGE = RETIREMENT_AGE
@@ -1282,6 +1282,22 @@ def run_single_optimization(
     write_metadata(args, output_dir, post_retirement_block)
     plot_contribution_scales(scales, plot_dir / "contribution_start_constants_by_age.pdf")
     plot_iteration_paths(path_history_frame, plot_dir / "path_iterations.pdf")
+    accumulation_path = final_path[final_path["starting_age"] <= FIXED_ANCHOR_AGE]
+    plot_final_simplex_doc(
+        accumulation_path,
+        plot_dir / "path_iterations_final_doc.pdf",
+        value_column="starting_age",
+        colorbar_label="Starting age",
+        title="Optimized Retirement Path on the Asset Simplex",
+        max_value=FIXED_ANCHOR_AGE,
+    )
+    plot_allocation_area(
+        final_path,
+        plot_dir / "optimized_retirement_path_allocation_doc.pdf",
+        x_column="starting_age",
+        x_label="Age",
+        title="Optimized Retirement Path Weights",
+    )
     if not trace.empty:
         plot_optimization_trace(trace, plot_dir / "optimization_traces.pdf")
         plot_validation_traces(

@@ -67,7 +67,9 @@ from common import huber_curvature_penalty_and_gradient, smooth_path_between_gra
 from cv import RUN_MODE_FULL, RUN_MODES, make_cv_folds
 from portfolio_helpers import generate_portfolio_weights
 from plots import (
+    plot_allocation_area,
     plot_end_paths,
+    plot_final_simplex_doc,
     plot_gradient_snapshots,
     plot_optimization_traces,
     plot_validation_traces,
@@ -1083,6 +1085,21 @@ def run_single_optimization(
     if good_trajectory.exists():
         plot_gradient_snapshots(good_trajectory, plot_dir / "good_start_path_snapshots.pdf")
     plot_iteration_paths(best_path_history_frame, plot_dir / "path_iterations.pdf")
+    plot_final_simplex_doc(
+        final_path,
+        plot_dir / "path_iterations_final_doc.pdf",
+        value_column="horizon",
+        colorbar_label="Horizon",
+        title="Optimized Glide Path on the Asset Simplex",
+        max_value=MAX_HORIZON,
+    )
+    plot_allocation_area(
+        final_path,
+        plot_dir / "optimized_glide_path_allocation_doc.pdf",
+        x_column="horizon",
+        x_label="Horizon (years remaining)",
+        title="Optimized Glide Path Weights",
+    )
 
     print(f"best start: {best_name}, canonical objective {best_score:.6f}")
     print(f"wrote {output_dir / 'final_path.csv'}")

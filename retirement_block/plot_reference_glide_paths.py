@@ -19,6 +19,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from retirement_block.common import DATA_DIR, PLOT_DIR, WEIGHT_COLUMNS, validate_reference_path
 
 
+def save_pdf_and_png(fig: plt.Figure, output_pdf: Path, dpi: int = 220) -> None:
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_pdf)
+    fig.savefig(output_pdf.with_suffix(".png"), dpi=dpi)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -99,6 +105,36 @@ def plot_path(path: pd.DataFrame, output_pdf: Path, label: str) -> None:
     plt.close(fig)
 
 
+def plot_top_panel_doc(path: pd.DataFrame, output_pdf: Path, label: str) -> None:
+    ages = path["age"]
+    stocks = path["stock_weight"] * 100
+    bonds = path["bond_weight"] * 100
+    t_bills = path["t_bill_weight"] * 100
+    colors = ["#2c7fb8", "#7fcdbb", "#edf8b1"]
+
+    with plt.rc_context({"font.size": 18, "axes.titlesize": 20}):
+        fig, ax = plt.subplots(figsize=(11, 6.2), constrained_layout=True)
+        ax.stackplot(
+            ages,
+            stocks,
+            bonds,
+            t_bills,
+            labels=["Stocks", "Bonds", "T-Bills"],
+            colors=colors,
+            alpha=0.92,
+        )
+        ax.set_title(f"Reconstructed {label} Glide Path", fontweight="bold")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Allocation (%)")
+        ax.set_xlim(20, 90)
+        ax.set_ylim(0, 100)
+        ax.grid(axis="y", alpha=0.2)
+        handles, labels = ax.get_legend_handles_labels()
+        fig.legend(handles, labels, loc="outside upper center", ncol=3, frameon=False)
+        save_pdf_and_png(fig, output_pdf)
+        plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     input_csvs = args.input_csvs or sorted(DATA_DIR.glob("*_glide_path.csv"))
@@ -109,9 +145,9 @@ def main() -> None:
         label = display_name(input_csv)
         output_pdf = args.plot_dir / f"{input_csv.stem}.pdf"
         plot_path(path, output_pdf, label)
+        plot_top_panel_doc(path, args.plot_dir / f"{input_csv.stem}_top_panel_doc.pdf", label)
         print(f"wrote {output_pdf}")
 
 
 if __name__ == "__main__":
     main()
-

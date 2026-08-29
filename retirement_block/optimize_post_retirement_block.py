@@ -38,6 +38,12 @@ from retirement_block.common import (
 from simulate_returns import generate_balanced_initial_year_indexes, generate_resampled_paths, load_returns
 
 
+def save_pdf_and_png(fig: plt.Figure, output_pdf: Path, dpi: int = 220) -> None:
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_pdf)
+    fig.savefig(output_pdf.with_suffix(".png"), dpi=dpi)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="from_1927")
@@ -143,36 +149,46 @@ def post_retirement_block(selected: pd.Series, withdrawal_rate: float) -> pd.Dat
     return pd.DataFrame(rows)
 
 
-def plot_candidate_grid(summary: pd.DataFrame, selected: pd.Series, output_pdf: Path) -> None:
+def plot_candidate_grid(
+    summary: pd.DataFrame,
+    selected: pd.Series,
+    output_pdf: Path,
+    base_size: float = 10,
+    save_png: bool = False,
+) -> None:
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
-    draw_simplex_outline(ax)
-    scatter = ax.scatter(
-        summary["simplex_x"],
-        summary["simplex_y"],
-        c=summary["terminal_worst_2pct_mean"],
-        cmap="viridis",
-        s=18,
-        alpha=0.85,
-    )
-    ax.scatter(
-        selected["simplex_x"],
-        selected["simplex_y"],
-        color="white",
-        edgecolor="black",
-        s=90,
-        marker="*",
-        linewidth=0.9,
-        label="selected",
-        zorder=5,
-    )
-    ax.set_title("Fixed Post-Retirement Portfolio Search")
-    ax.set_aspect("equal")
-    ax.legend(frameon=False)
-    colorbar = fig.colorbar(scatter, ax=ax, shrink=0.82)
-    colorbar.set_label("Worst 2% mean terminal wealth ratio")
-    fig.savefig(output_pdf)
-    plt.close(fig)
+    with plt.rc_context({"font.size": base_size, "axes.titlesize": base_size * 1.2}):
+        fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
+        draw_simplex_outline(ax)
+        scatter = ax.scatter(
+            summary["simplex_x"],
+            summary["simplex_y"],
+            c=summary["terminal_worst_2pct_mean"],
+            cmap="viridis",
+            s=18,
+            alpha=0.85,
+        )
+        ax.scatter(
+            selected["simplex_x"],
+            selected["simplex_y"],
+            color="white",
+            edgecolor="black",
+            s=90,
+            marker="*",
+            linewidth=0.9,
+            label="selected",
+            zorder=5,
+        )
+        ax.set_title("Fixed Post-Retirement Portfolio Search")
+        ax.set_aspect("equal")
+        ax.legend(frameon=False)
+        colorbar = fig.colorbar(scatter, ax=ax, shrink=0.82)
+        colorbar.set_label("Worst 2% mean terminal wealth ratio")
+        if save_png:
+            save_pdf_and_png(fig, output_pdf)
+        else:
+            fig.savefig(output_pdf)
+        plt.close(fig)
 
 
 def write_metadata(args: argparse.Namespace, selected: pd.Series) -> None:
@@ -223,10 +239,12 @@ def main() -> None:
     candidate_csv = args.output_dir / "post_retirement_candidate_summary.csv"
     block_csv = args.output_dir / "post_retirement_block.csv"
     plot_pdf = args.plot_dir / "post_retirement_candidate_grid.pdf"
+    plot_doc_pdf = args.plot_dir / "post_retirement_candidate_grid_doc.pdf"
     summary.to_csv(candidate_csv, index=False)
     block.to_csv(block_csv, index=False)
     write_metadata(args, selected)
     plot_candidate_grid(summary, selected, plot_pdf)
+    plot_candidate_grid(summary, selected, plot_doc_pdf, base_size=12, save_png=True)
     print(
         "selected post-retirement fixed portfolio "
         f"stocks={selected['stock_weight']:.2f}, "
