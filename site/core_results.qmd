@@ -6,5 +6,26 @@ The main output of this project is a guideline (glide path) for investment strat
 
 ## Retirement
 
+### Glide Path
+
 TODO: simplex and ribbon-plot depictions of the chosen glide path
 
+An optimal glide path for retirement involves near-100% allocation into stocks through age 30.
+As an investor approaches retirement, this allocation decreases, replaced primarily by bonds
+until arriving at the post-retirement allocation of 48% stocks/ 24% bonds/ 28% T-bills
+
+### Annual Withdrawals
+
+The project also tested whether the standard 4% advice for withdrawals in retirement was reasonable.
+Interestingly, under my assumptions, 4% was slightly too risky; around 3.5% seemed the most-aggressive
+safe rate. TODO: refer to docs covering this in more detail
+
+TODO: show the plot visually demonstrating that 3.5% is a good choice
+
+## Non-Retirement
+
+TODO: simplex and ribbon-plot depictions of the chosen glide path
+
+An investor with just a year to invest should invest roughly 10% stocks/ 90% T-bills. Longer horizons gradually trade
+T-bills for intermediate-duration bonds, and gain more stock exposure. By 30 years, we're somewhat close to the famous
+60/40 at 60% stocks/ 32% bonds/ 8% T-bills. At a 50-year horizon, the optimal portfolio hits about 87% stocks/ 13% bonds.
