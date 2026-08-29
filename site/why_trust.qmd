@@ -46,3 +46,41 @@ folds:
 
 TODO: the plot showing this
 
+## Validation of Retirement Paths
+
+Due to the tiny size of the historical dataset, my machine learning approach employed a
+training and validation set, but no final test set. Instead, after fixing hyperparameters
+selected from validation, I tested the optimization algorithm on the retirement branch of
+the project, and compared performance against target-date glide paths publicly described by
+[Vanguard](https://workplace.vanguard.com/investment/strategies/tdf-glide-path.html)
+and [Fidelity](https://institutional.fidelity.com/app/proxy/content?literatureURL=/9921209.PDF).
+
+TODO: show my glide path, Vanguard's, and Fidelity's side by side, likely as ribbon plots
+
+As a caveat, both Vanguard and Fidelity place assets in their glide paths that don't fit
+perfectly in my 3 categories; for example, non-US equities were approximated as US equities
+for the purposes of my simulations, and TIPS were considered short-duration treasuries. In
+general, this could lead to underrepresenting the true portfolio performance of their funds
+in my comparison. However, their glide paths still serve as a useful approximate validation
+tool for my optimization approach.
+
+I separated compared post-retirement outcomes and pre-retirement outcomes.
+
+### Post-Retirement Outcomes
+
+After optimization, my glide path performs better at every tested definition of risk. Here
+I consider the proportion of initial (age-65) wealth left at age 90 (y-axis) among the
+worst N% of simulated outcomes.
+
+TODO: show terminal-wealth barplots
+
+### Pre-Retirement Outcomes
+
+My optimal portfolio appeared favorable or comparable to Fidelity or Vanguard's in
+pre-retirement as well. Here I show each approach's performance relative to the mean on the
+y-axis. At a given age, I essentially calculate a ratio of terminal wealth to starting wealth
+among the worst N% of simulations (TODO: link to appropriate docs section better describing this).
+At more conservative definitions of risk, my portfolio performs favorably (recall it optimizes
+for worst 4%), while Fidelity outperforms it in typical returns.
+
+TODO: show line plot of relative pre-retirement performance
