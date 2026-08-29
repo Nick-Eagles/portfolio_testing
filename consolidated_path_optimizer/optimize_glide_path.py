@@ -589,7 +589,7 @@ def optimize_control_points(
         second_moment = beta2 * second_moment + (1 - beta2) * control_gradient**2
         corrected_first = first_moment / (1 - beta1**local_step)
         corrected_second = second_moment / (1 - beta2**local_step)
-        step_scale = learning_rate * min(1.0, 10 * (1 - local_step / (steps + 1)))
+        step_scale = learning_rate
         adam_direction = corrected_first / (np.sqrt(corrected_second) + epsilon)
         adam_direction = project_gradient_to_simplex_tangent(
             adam_direction,
