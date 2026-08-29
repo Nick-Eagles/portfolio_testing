@@ -38,6 +38,8 @@ non-retirement glide paths? My intuition for the stricter rule comes from the op
 prior to retirement, whether in a retirement or non-retirement account. Note that constant annual withdrawals were assumed in the post-retirement block (more on this in the
 next section).
 
+TODO: show version of `retirement_block/plots/post_retirement_candidate_grid.pdf` and explain the search over the discretized simplex
+
 ### Determining Annual Withdrawals
 
 Common retirement recommendations advocate for an investor to withdraw 4% of accumulated retirement savings in a given year, adjusting the nominal amount by inflation.
