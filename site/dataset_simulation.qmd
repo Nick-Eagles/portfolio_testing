@@ -55,7 +55,7 @@ In practice, I choose a small $\alpha$ of 0.001, which is intentionally selected
 *nested*: someone investing for two years should have the same portfolio in their last year as a one-year investor. In fact, as $\alpha \to 0$, optimization's maximum
 perfectly approaches this nested property.
 
-The retirement accumulation path uses the same basic structure, but the horizon index is replaced by starting age, and the outcome is retirement wealth rather than annualized return. Let $a$ index starting age, $U$ be the retirement evaluation ages 65 through 90, and $B_{m,u}(a,W)$ be the simulated wealth at evaluation age $u$ for simulation $m$ when starting at age $a$. The fixed post-retirement block and annual withdrawals are already included in $B_{m,u}(a,W)$. Because negative retirement balances are all versions of "depleted", I clip terminal wealth at 0 before scoring:
+The retirement accumulation path uses the same basic structure, but the horizon index is replaced by starting age, and the outcome is retirement wealth rather than annualized return. Let $a$ index starting age, $U$ be the retirement evaluation ages 65 through 90, and $B_{m,u}(a,W)$ be the simulated wealth at evaluation age $u$ for simulation $m$ when starting at age $a$. The fixed post-retirement block and annual withdrawals are already included in $B_{m,u}(a,W)$. Because negative retirement balances are mathematically possible but unreasonable in practice, I clip terminal wealth at 0 before scoring:
 
 $$
 s_{a,u}(W)

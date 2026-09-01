@@ -1,6 +1,5 @@
 ---
 title: "Data-Driven Optimal Portfolio Selection Project"
-description: "A downside-aware glide-path project for retirement and non-retirement portfolios."
 page-layout: full
 toc: false
 ---
@@ -32,13 +31,8 @@ historical real returns
 :::
 
 ::: {.metric}
-**20,000**
-final bootstrap paths
-:::
-
-::: {.metric}
-**3.5%**
-retirement withdrawal rate used
+**Retirement and Non-Retirement**
+investment contexts
 :::
 :::
 
