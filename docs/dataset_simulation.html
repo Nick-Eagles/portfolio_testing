@@ -418,22 +418,38 @@ J_{\text{non-retirement}}(W)
 }.
 \]</span></p>
 <p>In practice, I choose a small <span class="math inline">\(\alpha\)</span> of 0.001, which is intentionally selected so that optimization prioritizes shorter horizons. The idea is that the optimal glide path must be <em>nested</em>: someone investing for two years should have the same portfolio in their last year as a one-year investor. In fact, as <span class="math inline">\(\alpha \to 0\)</span>, optimization’s maximum perfectly approaches this nested property.</p>
-<p>For the retirement accumulation path, each starting age has a score formed from the same worst-tail idea, but evaluated across retirement outcomes after passing through the fixed post-retirement block. Let <span class="math inline">\(a\)</span> index starting age, <span class="math inline">\(U\)</span> be the retirement evaluation ages 65 through 90, and <span class="math inline">\(B_{m,u}(a,W)\)</span> be the simulated wealth at evaluation age <span class="math inline">\(u\)</span> for simulation <span class="math inline">\(m\)</span> when starting at age <span class="math inline">\(a\)</span>. Then</p>
+<p>The retirement accumulation path uses the same basic structure, but the horizon index is replaced by starting age, and the outcome is retirement wealth rather than annualized return. Let <span class="math inline">\(a\)</span> index starting age, <span class="math inline">\(U\)</span> be the retirement evaluation ages 65 through 90, and <span class="math inline">\(B_{m,u}(a,W)\)</span> be the simulated wealth at evaluation age <span class="math inline">\(u\)</span> for simulation <span class="math inline">\(m\)</span> when starting at age <span class="math inline">\(a\)</span>. The fixed post-retirement block and annual withdrawals are already included in <span class="math inline">\(B_{m,u}(a,W)\)</span>. Because negative retirement balances are all versions of “depleted”, I clip terminal wealth at 0 before scoring:</p>
+<p><span class="math display">\[
+s_{a,u}(W)
+=
+\frac{1}{|T_{a,u}|}
+\sum_{m \in T_{a,u}}
+\max\{B_{m,u}(a,W), 0\}
+\]</span></p>
+<p>where <span class="math inline">\(T_{a,u}\)</span> is the bottom 4% of simulated outcomes for that starting age and evaluation age. I then average those downside scores across retirement evaluation ages:</p>
+<p><span class="math display">\[
+s_a(W)
+=
+\frac{1}{|U|}
+\sum_{u \in U}
+s_{a,u}(W).
+\]</span></p>
+<p>Finally, the retirement path objective is the same kind of exponentially weighted glide-path score as the non-retirement objective:</p>
 <p><span class="math display">\[
 J_{\text{retirement}}(W)
 =
 \frac{1}{|A|}
 \sum_{a \in A}
-\gamma_a
-\left[
-\frac{1}{|U|}
-\sum_{u \in U}
-\frac{1}{|T_{a,u}|}
-\sum_{m \in T_{a,u}}
-\max\{B_{m,u}(a,W), 0\}
-\right],
+\gamma_a s_a(W),
+\qquad
+\gamma_a =
+\frac{
+\exp\left(\log(\delta)\frac{a-a_{\min}}{a_{\max}-a_{\min}}\right)
+}{
+\frac{1}{|A|}\sum_{b \in A}\exp\left(\log(\delta)\frac{b-a_{\min}}{a_{\max}-a_{\min}}\right)
+}.
 \]</span></p>
-<p>where <span class="math inline">\(T_{a,u}\)</span> is the bottom 4% of simulated outcomes for that starting age and evaluation age. I use an age-65/age-20 weighting ratio of 1000, which intentionally puts more pressure on near-retirement starts.</p>
+<p>Here <span class="math inline">\(\delta = 1000\)</span>, meaning age 65 receives 1000 times as much weight as age 20 before normalization. This serves the same practical purpose as choosing a small <span class="math inline">\(\alpha\)</span> in the non-retirement objective, just with the axis reversed: both choices put much more pressure on short-horizon decisions so the path behaves like a nested sequence rather than letting long-horizon performance dominate the early points.</p>
 </section>
 </section>
 <section id="sec-after-age-65" class="level3">
