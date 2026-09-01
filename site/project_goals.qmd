@@ -1,6 +1,5 @@
 ---
 title: "Project Goals"
-description: "Project framing and modeling assumptions."
 ---
 
 This project aims to produce and showcase a simple data-driven investment strategy (glide path) an individual can leverage in retirement or non-retirement contexts.
@@ -15,7 +14,7 @@ This project aims to produce and showcase a simple data-driven investment strate
 
 ### Retirement-Specific Assumptions {#sec-retirement-assumptions}
 
-- Retirement is assumed to occur at age 65, at which point 3.5% (more on this number in [Core Results](core_results.qmd#sec-annual-withdrawals)) of the real balance is withdrawn annually until age 90. I'll likely make these choices configurable in the [web app](web_app.qmd) since they vary substantially by investor.
+- Retirement is assumed to occur at age 65, at which point 3.5% (more on this number in [Core Results](core_results.qmd#sec-annual-withdrawals)) of the real balance is withdrawn annually until age 90.
 - Modeling includes constant real annual contributions, starting at age 20 and ending at age 64. A potential future direction would be to model typical salary increases throughout one's career, since this is unlikely to involve constant contributions.
 
 ### Non-Retirement Assumptions {#sec-non-retirement-assumptions}

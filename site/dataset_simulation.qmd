@@ -97,7 +97,7 @@ Fixed post-retirement portfolio search over the discretized stock/bond/T-bill si
 Common retirement recommendations advocate for an investor to withdraw 4% of accumulated retirement savings in a given year, adjusting the nominal amount by inflation.
 This project aimed to test that 4% number using a similar framing of risk as the glide-path arm. Specifically, I required that the average among the worst 2% of outcomes
 for the optimal portfolio not fully deplete retirement savings. Interestingly, the 4% rule results in bankruptcy according to this framing; a value close to 3.5% (the value
-selected for modeling pre-retirement glide paths) leaves a small buffer at 90.
+selected for modeling pre-retirement glide paths) leaves a small buffer at age 90.
 
 ::: {#fig-withdrawal-sweep}
 ![](assets/figures/withdrawal_rate_sweep.png)

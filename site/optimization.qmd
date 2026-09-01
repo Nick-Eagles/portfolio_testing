@@ -1,6 +1,5 @@
 ---
 title: "Optimization Algorithms"
-description: "The final bisection/control-point gradient approach and why earlier optimizer variants were set aside."
 ---
 
 I experimented with several optimization approaches throughout the life of this project to arrive at a glide path optimizing the [objective](dataset_simulation.qmd#sec-objective). I'll

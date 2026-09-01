@@ -1,6 +1,5 @@
 ---
 title: "Core Results"
-description: "Final retirement and non-retirement glide paths, with the retirement withdrawal-rate check."
 ---
 
 The main output of this project is a guideline (glide path) for investment strategy for retirement and non-retirement accounts.
