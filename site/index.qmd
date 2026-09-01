@@ -1,51 +1,83 @@
 ---
-title: "Home"
+title: "Data-Driven Optimal Portfolio Selection Project"
+description: "A downside-aware glide-path project for retirement and non-retirement portfolios."
+page-layout: full
+toc: false
 ---
 
+::: {.hero}
+::: {.hero-copy}
 # Data-Driven Optimal Portfolio Selection Project
 
 This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor's particular situation.
 
 I have separate pages diving into the dataset, statistical framing, optimization strategy, and even an interactive app for exploring results.
 
+::: {.hero-actions}
+[Core results](core_results.qmd){.btn}
+[Why trust the results?](why_trust.qmd){.btn}
+:::
+:::
+:::
+
+::: {.metric-strip}
+::: {.metric}
+**3 assets**
+U.S. stocks, bonds, and T-bills
+:::
+
+::: {.metric}
+**1927-2025**
+historical real returns
+:::
+
+::: {.metric}
+**20,000**
+final bootstrap paths
+:::
+
+::: {.metric}
+**3.5%**
+retirement withdrawal rate used
+:::
+:::
+
 ## Explore the project
 
-::: {.grid}
-
-::: {.g-col-12 .g-col-md-6}
+::: {.project-grid}
+::: {.project-card}
 ### [Project Goals](project_goals.qmd)
 
-A basic overview of the project framing, and what financial questions I wanted to answer 
+A basic overview of the project framing, and what financial questions I wanted to answer.
 :::
 
-::: {.g-col-12 .g-col-md-6}
+::: {.project-card}
 ### [Dataset and Simulation Strategy](dataset_simulation.qmd)
 
-Details covering the historical dataset and how I sampled it to rank portfolio choices
+Details covering the historical dataset and how I sampled it to rank portfolio choices.
 :::
 
-::: {.g-col-12 .g-col-md-6}
+::: {.project-card}
 ### [Optimization Algorithms](optimization.qmd)
 
-A mathematical description of the algorithm I designed to reliably arrive at an optimal glide path
+A mathematical description of the algorithm I designed to reliably arrive at an optimal glide path.
 :::
 
-::: {.g-col-12 .g-col-md-6}
+::: {.project-card}
 ### [Why Trust My Results?](why_trust.qmd)
 
-The ML techniques and validation strategy I employed to produce robust, trustworthy results
+The ML techniques and validation strategy I employed to produce robust, trustworthy results.
 :::
 
-::: {.g-col-12 .g-col-md-6}
-### [Core Findings](core_findings.qmd)
+::: {.project-card}
+### [Core Results](core_results.qmd)
 
 What interesting results did this project produce?
 :::
 
-::: {.g-col-12 .g-col-md-6}
+::: {.project-card}
 ### [Web App](web_app.qmd)
 
-An interactive in-browser app to explore my results under different settings
+An interactive in-browser app to explore my results under different settings.
 :::
-
 :::

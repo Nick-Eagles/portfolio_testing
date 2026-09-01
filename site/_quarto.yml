@@ -1,10 +1,17 @@
 project:
   type: website
   output-dir: ../docs
+  resources:
+    - assets/figures/**
 
 website:
   title: "Data-Driven Optimal Portfolio Selection Project"
+  description: "A data-driven exploration of retirement and non-retirement glide paths across U.S. stocks, bonds, and T-bills."
+  search:
+    location: navbar
+    type: overlay
   navbar:
+    pinned: true
     left:
       - href: index.qmd
         text: Home
@@ -20,8 +27,20 @@ website:
         text: Core Results
       - href: web_app.qmd
         text: Web App
+  page-footer:
+    center: "Built with Quarto. Historical returns from Simba's Backtesting Spreadsheet."
 
 format:
   html:
-    theme: cosmo
+    theme:
+      light: [cosmo, styles.scss]
+      dark: [darkly, styles.scss]
     self-contained: false
+    toc: true
+    toc-depth: 3
+    number-sections: false
+    smooth-scroll: true
+    anchor-sections: true
+    fig-align: center
+    link-external-newwindow: true
+    page-layout: article

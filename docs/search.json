@@ -1,0 +1,128 @@
+[
+  {
+    "objectID": "project_goals.html",
+    "href": "project_goals.html",
+    "title": "Project Goals",
+    "section": "",
+    "text": "This project aims to produce and showcase a simple data-driven investment strategy (glide path) an individual can leverage in retirement or non-retirement contexts."
+  },
+  {
+    "objectID": "project_goals.html#sec-core-assumptions",
+    "href": "project_goals.html#sec-core-assumptions",
+    "title": "Project Goals",
+    "section": "Core Assumptions",
+    "text": "Core Assumptions\n\nWhile a complex set of diverse assets may be optimal, I assume a combination of index funds tracking merely U.S. equities, U.S. (intermediate-duration) bonds, and U.S. (short-duration) treasuries is sufficient to form a reasonably performant portfolio. In a taxable brokerage account, this would correspond to something like a portfolio of only VOO, AGG, and SGOV, respectively.\nGlide paths tested in this project potentially change or rebalance allocations exactly annually. This project does not aim to test favorable frequent-trading strategies.\nAn investment strategy is considered “better” here if it yields higher expected returns under downside outcomes. See Dataset and Simulation Strategy for the exact mathematical framing.\nOptimal allocations in this project are glide paths, not fixed portfolios. It is assumed an investor should tolerate a constant level of “risk” at every remaining time period throughout the investment horizon, which naturally produces less aggressive investments closer to liquidiation.\nOptimal allocation is considered to only be a function of investment horizon or age. Individual circumstances like current wealth are not accounted for.\n\n\nRetirement-Specific Assumptions\n\nRetirement is assumed to occur at age 65, at which point 3.5% (more on this number in Core Results) of the real balance is withdrawn annually until age 90. I’ll likely make these choices configurable in the web app since they vary substantially by investor.\nModeling includes constant real annual contributions, starting at age 20 and ending at age 64. A potential future direction would be to model typical salary increases throughout one’s career, since this is unlikely to involve constant contributions.\n\n\n\nNon-Retirement Assumptions\n\nModeling involves an initial lump-sum investment with no further contributions, which is liquidated in full at the end of the investment period.\nTaxes and fees are not modeled, and assets are assumed to be highly (infinitely) liquid when rebalancing or re-allocation occur."
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Data-Driven Optimal Portfolio Selection Project",
+    "section": "",
+    "text": "This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor’s particular situation.\nI have separate pages diving into the dataset, statistical framing, optimization strategy, and even an interactive app for exploring results.\n\nCore results Why trust the results?"
+  },
+  {
+    "objectID": "index.html#explore-the-project",
+    "href": "index.html#explore-the-project",
+    "title": "Data-Driven Optimal Portfolio Selection Project",
+    "section": "Explore the project",
+    "text": "Explore the project\n\n\nProject Goals\nA basic overview of the project framing, and what financial questions I wanted to answer.\n\n\nDataset and Simulation Strategy\nDetails covering the historical dataset and how I sampled it to rank portfolio choices.\n\n\nOptimization Algorithms\nA mathematical description of the algorithm I designed to reliably arrive at an optimal glide path.\n\n\nWhy Trust My Results?\nThe ML techniques and validation strategy I employed to produce robust, trustworthy results.\n\n\nCore Results\nWhat interesting results did this project produce?\n\n\nWeb App\nAn interactive in-browser app to explore my results under different settings."
+  },
+  {
+    "objectID": "why_trust.html",
+    "href": "why_trust.html",
+    "title": "Why Trust My Results?",
+    "section": "",
+    "text": "I used a combination of standard machine-learning best practices and validation against external data to ensure the results found by this project were robust and trustworthy."
+  },
+  {
+    "objectID": "why_trust.html#sec-machine-learning-approach",
+    "href": "why_trust.html#sec-machine-learning-approach",
+    "title": "Why Trust My Results?",
+    "section": "Machine Learning Approach",
+    "text": "Machine Learning Approach\nThe ~100-year dataset is fairly small, and I had to try different optimization algorithms and hyperparameters before arriving at an effective strategy. The basic idea was to treat the glide path as a machine learning model, and employ standard best practices.\n\nCross Validation\nThe small ~100-year dataset with temporally autocorrelated observations presented challenges for employing standard k-fold cross validation. A naive initial approach would be to split time periods into 5 training and validation folds; however, this leaves just 20 years for validation in each fold. Economic regimes can vary dramatically between periods this small, and the optimal strategy may not be expected to generalize from training to validation with this approach.\nI employed a modified 5-fold cross validation where training/validation was split 60/40. These sets could partially overlap against folds; the first year for each training chunk was linearly sampled from the full ~100-year dataset, and 2025 was circularly connected to 1927 when forming the chunks. While variation across folds is somewhat artifically reduced compared to standard k-fold cross validation, this approach makes better use of the limited number of total years, and validation sets are sufficiently large.\n\n\nHyperparameter Tuning\nThere were quite a few hyperparameters to tune:\n\noptimization algorithm\nnumber of bisections\nlearning rate\nnumber of gradient steps\nconvex-smoothing strength\nHuber curvature penalty\n\nA full grid search was too expensive; I opted to greedily tune each parameter individually. After arriving in a good range, I verified that perturbations of any hyperparameter resulted in worse scores for validation performance or similarity of optimized paths across folds:\n\n\n\n\n\n\nFigure 1: Hyperparameter perturbation screen, comparing validation performance against similarity of optimized paths across folds."
+  },
+  {
+    "objectID": "why_trust.html#sec-retirement-validation",
+    "href": "why_trust.html#sec-retirement-validation",
+    "title": "Why Trust My Results?",
+    "section": "Validation of Retirement Paths",
+    "text": "Validation of Retirement Paths\nDue to the tiny size of the historical dataset, my machine learning approach employed a training and validation set, but no final test set. Instead, after fixing hyperparameters selected from validation, I tested the optimization algorithm on the retirement branch of the project, and compared performance against target-date glide paths publicly described by Vanguard and Fidelity.\n\nMy optimized pathVanguard approximationFidelity approximation\n\n\n\n\n\n\n\n\n\n\n\n\nAs a caveat, both Vanguard and Fidelity place assets in their glide paths that don’t fit perfectly in my 3 categories; for example, non-US equities were approximated as US equities for the purposes of my simulations, and TIPS were considered short-duration treasuries. In general, this could lead to underrepresenting the true portfolio performance of their funds in my comparison. However, their glide paths still serve as a useful approximate validation tool for my optimization approach.\nI separated compared post-retirement outcomes and pre-retirement outcomes.\n\nPost-Retirement Outcomes\nAfter optimization, my glide path performs better at every tested definition of risk. Here I consider the proportion of initial (age-65) wealth left at age 90 (y-axis) among the worst N% of simulated outcomes.\n\n\n\n\n\n\nFigure 2: Post-retirement external comparison across downside-risk definitions.\n\n\n\n\n\nPre-Retirement Outcomes\nMy optimal portfolio appeared favorable or comparable to Fidelity or Vanguard’s in pre-retirement as well. Here I show each approach’s performance relative to the mean on the y-axis. At a given age, I essentially calculate a ratio of terminal wealth to starting wealth among the worst N% of simulations (see the retirement accumulation objective). At more conservative definitions of risk, my portfolio performs favorably (recall it optimizes for worst 4%), while Fidelity outperforms it in typical returns.\n\n\n\n\n\n\nFigure 3: Pre-retirement external comparison against Vanguard and Fidelity approximations, shown relative to the same-age mean."
+  },
+  {
+    "objectID": "web_app.html",
+    "href": "web_app.html",
+    "title": "Web App",
+    "section": "",
+    "text": "The web app is intentionally still a later part of the project. My plan is to make these choices configurable here, since retirement age, withdrawal rate, time horizon, and starting assumptions vary substantially by investor.\n\n\n\n\n\n\nNoteComing later\n\n\n\nThis page is reserved for the in-browser explorer. The static documentation pages currently carry the project framing, methods, validation, and core results."
+  },
+  {
+    "objectID": "optimization.html",
+    "href": "optimization.html",
+    "title": "Optimization Algorithms",
+    "section": "",
+    "text": "I experimented with several optimization approaches throughout the life of this project to arrive at a glide path optimizing the objective. I’ll split this into the final algorithm used for results and all other algorithms attempted before arriving at the final one."
+  },
+  {
+    "objectID": "optimization.html#sec-final-algorithm",
+    "href": "optimization.html#sec-final-algorithm",
+    "title": "Optimization Algorithms",
+    "section": "Final Algorithm",
+    "text": "Final Algorithm\n\n\n\n\n\n\nFigure 1: The final non-retirement glide path on the asset simplex, colored by horizon after the bisection/control-point optimizer converged on the full dataset.\n\n\n\nI developed the algorithm to work initially in a non-retirement context, which I’ll describe here; however, the algorithm is generalizable to any glide path, including the retirement context.\n\nGradient Ascent\nIn the non-retirement context, a glide path is composed of weights for stocks, bonds, and treasuries at each horizon from 1 to 50. Mathematically, we can call this a 3 x 50 matrix. The returns along Monte Carlo simulated trajectories are a direct function of this matrix. In fact, the objective is a fixed function of this matrix that is differentiable almost everywhere (except at points along the surface where certain simulated paths transition in or out of the worst 4% of outcomes). The fact that the objective is locally differentiable with respect to the weights means we can apply gradient ascent to a starting glide path and iteratively improve the objective while refining the glide path.\nIn testing, it turns out that the final path after applying many iterations of gradient ascent is highly sensitive to the initial glide path, which is perhaps expected of a non-convex optimization surface. However, I wanted an algorithm that was robust to initial conditions.\n\n\nGradient Ascent with Path Bisections\nThe intuition for this algorithm variation is to gradually increase the complexity of the path being optimized as it gets closer to convergence. At each main iteration of the algorithm, there are \\(N_i = 2^i + 1\\) equally spaced control points, between which portfolio weights are linearly interpolated. Whenever gradient ascent is applied, it operates only on these control points; the gradient tracks changes to the objective both due to movement of the control points and due to changes in the positions of the linearly interpolated points. In this way, the whole path has fewer tunable parameters throughout most of the optimization process, but the entire glide path contributes accurately to the objective. The algorithm works like this:\n\nStart with 2 control points: the portfolio weights for horizon 1 and 50. These can be randomly selected or empirically selected (more on this later).\nApply 15 iterations of gradient ascent, moving those 2 endpoints.\n\nFor bisection \\(i \\in \\{1,2,3,4\\}\\):\n\nAdd new control points at the midpoint of every pair of adjacent existing control points.\nApply 15 more iterations of gradient ascent on these control points.\n\nAs hypothesized, this algorithm is insensitive to random initialization: seemingly all initial glide paths tested converged to the same final result.\n\n\nRegularization\nIn practice, additional regularization improved both validation performance and consistency of final paths across validation folds (details in this vignette). Both convex smoothing and a Huber curvature penalty together resulted in this improvement; these regularization approaches were intended to reduce jaggedness and complexity in the optimized paths."
+  },
+  {
+    "objectID": "optimization.html#sec-other-algorithms",
+    "href": "optimization.html#sec-other-algorithms",
+    "title": "Optimization Algorithms",
+    "section": "Other Attempted Algorithms",
+    "text": "Other Attempted Algorithms\nEarlier versions included fixed-portfolio grids, greedy one-horizon-at-a-time paths, and direct full-path gradient ascent. The direct full-path optimizer was useful as a validation baseline, but it was much more sensitive to initialization than the bisection/control-point optimizer. That made it a worse fit for the main project goal: producing a stable, interpretable glide path rather than merely a high-scoring path from a lucky start."
+  },
+  {
+    "objectID": "core_results.html",
+    "href": "core_results.html",
+    "title": "Core Results",
+    "section": "",
+    "text": "The main output of this project is a guideline (glide path) for investment strategy for retirement and non-retirement accounts."
+  },
+  {
+    "objectID": "core_results.html#sec-retirement-results",
+    "href": "core_results.html#sec-retirement-results",
+    "title": "Core Results",
+    "section": "Retirement",
+    "text": "Retirement\n\nGlide Path\n\nAllocation ribbonSimplex path\n\n\n\n\n\n\n\n\nFigure 1: Optimized retirement glide path weights by age.\n\n\n\n\n\n\n\n\n\n\n\nFigure 2: The same optimized retirement path on the stock/bond/T-bill simplex.\n\n\n\n\n\n\nAn optimal glide path for retirement involves near-100% allocation into stocks through age 30. As an investor approaches retirement, this allocation decreases, replaced primarily by bonds until arriving at the post-retirement allocation of 48% stocks/ 24% bonds/ 28% T-bills\n\n\nAnnual Withdrawals\nThe project also tested whether the standard 4% advice for withdrawals in retirement was reasonable. Interestingly, under my assumptions, 4% was slightly too risky; around 3.5% seemed the most-aggressive safe rate. See Determining Annual Withdrawals for more detail.\n\n\n\n\n\n\nFigure 3: Withdrawal-rate sweep used to choose 3.5% as the retirement modeling assumption."
+  },
+  {
+    "objectID": "core_results.html#sec-non-retirement-results",
+    "href": "core_results.html#sec-non-retirement-results",
+    "title": "Core Results",
+    "section": "Non-Retirement",
+    "text": "Non-Retirement\n\nAllocation ribbonSimplex path\n\n\n\n\n\n\n\n\nFigure 4: Optimized non-retirement glide path weights by investment horizon.\n\n\n\n\n\n\n\n\n\n\n\nFigure 5: The same optimized non-retirement glide path on the stock/bond/T-bill simplex.\n\n\n\n\n\n\nAn investor with just a year to invest should invest roughly 10% stocks/ 90% T-bills. Longer horizons gradually trade T-bills for intermediate-duration bonds, and gain more stock exposure. By 30 years, we’re somewhat close to the famous 60/40 at 60% stocks/ 32% bonds/ 8% T-bills. At a 50-year horizon, the optimal portfolio hits about 87% stocks/ 13% bonds."
+  },
+  {
+    "objectID": "dataset_simulation.html",
+    "href": "dataset_simulation.html",
+    "title": "Dataset and Simulation Strategy",
+    "section": "",
+    "text": "This project is made possible by historical annual-returns data from Simba’s Backtesting Spreadsheet. Specifically, I make use of the Data Series tab, and real returns from the TSM (US), TBM (US), and T-Bills TR columns. I use only the data between 1927 and 2025, as earlier data are either simulated or otherwise statistically estimated."
+  },
+  {
+    "objectID": "dataset_simulation.html#sec-dataset",
+    "href": "dataset_simulation.html#sec-dataset",
+    "title": "Dataset and Simulation Strategy",
+    "section": "",
+    "text": "This project is made possible by historical annual-returns data from Simba’s Backtesting Spreadsheet. Specifically, I make use of the Data Series tab, and real returns from the TSM (US), TBM (US), and T-Bills TR columns. I use only the data between 1927 and 2025, as earlier data are either simulated or otherwise statistically estimated."
+  },
+  {
+    "objectID": "dataset_simulation.html#sec-objective",
+    "href": "dataset_simulation.html#sec-objective",
+    "title": "Dataset and Simulation Strategy",
+    "section": "Objective",
+    "text": "Objective\n\nBefore Age 65\n\nBasic Framing\nTo determine the best portfolio at a given age or horizon, I define an objective function and optimize it (see optimization algorithms). For a given age or horizon before age 65, the objective is the mean annualized real returns among the worst 4% of simulated Monte Carlo outcomes along the remainder of the glide path. While the objective is explicitly downside-aware, optimal investments still become more aggressive for longer horizons.\n\n\nScoring an Entire Glide Path\nSince the product of the project is a glide path, the objective must be generalized at this level rather than at the level of an individual horizon or age. In practice, I use an exponentially weighted sum of objectives for each horizon/age:\nFor the non-retirement glide path, let \\(W = (w_1,\\ldots,w_H)\\) be the sequence of portfolio weights indexed by years remaining, and let\n\\[\ns_h(W) =\n\\frac{1}{|T_h|}\n\\sum_{m \\in T_h}\n\\left[\n\\prod_{t=1}^{h}\n\\left(1 + r_{m,t}^{\\top} w_{h-t+1}\\right)\n\\right]^{1/h}\n- 1\n\\]\nwhere \\(T_h\\) is the bottom 4% of simulated outcomes for horizon \\(h\\). The path objective is\n\\[\nJ_{\\text{non-retirement}}(W)\n=\n\\frac{1}{H}\n\\sum_{h=1}^{H}\n\\beta_h s_h(W),\n\\qquad\n\\beta_h =\n\\frac{\n\\exp\\left(\\log(\\alpha)\\frac{h-1}{H-1}\\right)\n}{\n\\frac{1}{H}\\sum_{k=1}^{H}\\exp\\left(\\log(\\alpha)\\frac{k-1}{H-1}\\right)\n}.\n\\]\nIn practice, I choose a small \\(\\alpha\\) of 0.001, which is intentionally selected so that optimization prioritizes shorter horizons. The idea is that the optimal glide path must be nested: someone investing for two years should have the same portfolio in their last year as a one-year investor. In fact, as \\(\\alpha \\to 0\\), optimization’s maximum perfectly approaches this nested property.\nFor the retirement accumulation path, each starting age has a score formed from the same worst-tail idea, but evaluated across retirement outcomes after passing through the fixed post-retirement block. Let \\(a\\) index starting age, \\(U\\) be the retirement evaluation ages 65 through 90, and \\(B_{m,u}(a,W)\\) be the simulated wealth at evaluation age \\(u\\) for simulation \\(m\\) when starting at age \\(a\\). Then\n\\[\nJ_{\\text{retirement}}(W)\n=\n\\frac{1}{|A|}\n\\sum_{a \\in A}\n\\gamma_a\n\\left[\n\\frac{1}{|U|}\n\\sum_{u \\in U}\n\\frac{1}{|T_{a,u}|}\n\\sum_{m \\in T_{a,u}}\n\\max\\{B_{m,u}(a,W), 0\\}\n\\right],\n\\]\nwhere \\(T_{a,u}\\) is the bottom 4% of simulated outcomes for that starting age and evaluation age. I use an age-65/age-20 weighting ratio of 1000, which intentionally puts more pressure on near-retirement starts.\n\n\n\nAfter Age 65\nSince cash flows are assumed to be fixed in retirement (annual withdrawals + constant expected gains/losses from investments), I opt to find the best fixed allocation, as opposed to a glide path, for the post-retirement block (ages 65-90 here).\n\nMain Objective\nThe best portfolio was defined as the one maximizing the mean among the worst 2% of simulated Monte Carlo returns. Why 2% instead of the 4% used in the pre-retirement and non-retirement glide paths? My intuition for the stricter rule comes from the opinion that depleting life savings is more disastrous than achieving suboptimal returns prior to retirement, whether in a retirement or non-retirement account. Note that constant annual withdrawals were assumed in the post-retirement block (more on this in the next section).\n\n\n\n\n\n\nFigure 1: Fixed post-retirement portfolio search over the discretized stock/bond/T-bill simplex. The selected point is the allocation with the best mean terminal wealth ratio among the worst 2% of simulated outcomes.\n\n\n\n\n\nDetermining Annual Withdrawals\nCommon retirement recommendations advocate for an investor to withdraw 4% of accumulated retirement savings in a given year, adjusting the nominal amount by inflation. This project aimed to test that 4% number using a similar framing of risk as the glide-path arm. Specifically, I required that the average among the worst 2% of outcomes for the optimal portfolio not fully deplete retirement savings. Interestingly, the 4% rule results in bankruptcy according to this framing; a value close to 3.5% (the value selected for modeling pre-retirement glide paths) leaves a small buffer at 90.\n\n\n\n\n\n\nFigure 2: Withdrawal-rate sweep for the fixed post-retirement block. The 3.5% point remains above zero for the mean of the worst 2% of terminal wealth outcomes, while more aggressive rates cross into depletion.\n\n\n\nAs a caveat to my results, I make the strict assumption that investors immediately withdraw some retirement savings at age 65; in practice, research shows typical investors often begin withdrawing several years later."
+  },
+  {
+    "objectID": "dataset_simulation.html#sec-simulation-strategy",
+    "href": "dataset_simulation.html#sec-simulation-strategy",
+    "title": "Dataset and Simulation Strategy",
+    "section": "Simulation Strategy",
+    "text": "Simulation Strategy\nBecause I only had 99 years to work with, and data are substantially autocorrelated (particularly within economic regimes), I opted to employ a form of bootstrapping.\n\nCircular Block Bootstrapping\nTo generate Monte Carlo simulations of the historical data, I use a circular block-bootstrapping algorithm. The idea is to produce novel but plausible sequences of annual-returns data, expanding the limited reference data but preserving sequential dependencies. For a given Monte Carlo run, here’s the algorithm:\n\nStart at a random year in the historical data.\nWith probability 1/10, move to another random year. Otherwise, proceed with the next year.\n\nAnnualized returns are evaluated for a given portfolio along the resulting series of years, with the boundary at 2025 circularly connected to the first year, 1927. This procedure is followed for each year along the investment period until horizon 50 (non-retirement) or age 90 (retirement). That probability of 1/10 produces an expected block length of 10, with block lengths geometrically distributed. The choice of block_length = 10 was arbitrary and based on intuition; longer block lengths are better at preserving real relationships among data across years, but smaller block lengths offer the opportunity to essentially generate a larger (and even potentially more accurate!) synthetic dataset.\n\n\nValidation vs Final Runs\nTo select optimization hyperparameters (see optimization algorithms), 2000 Monte Carlo simulations were generated for both training and validation slices of the data. For the final runs on the full data, 20,000 runs were simulated."
+  }
+]

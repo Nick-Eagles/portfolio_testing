@@ -1,18 +1,19 @@
 ---
 title: "Why Trust My Results?"
+description: "Validation design, hyperparameter tuning, and external glide-path comparisons."
 ---
 
 I used a combination of standard machine-learning best practices and validation against
 external data to ensure the results found by this project were robust and trustworthy.
 
-## Machine Learning Approach
+## Machine Learning Approach {#sec-machine-learning-approach}
 
 The ~100-year dataset is fairly small, and I had to try different
 [optimization algorithms](optimization.qmd) and hyperparameters before arriving at an
 effective strategy. The basic idea was to treat the glide path as a machine learning
 model, and employ standard best practices.
 
-### Cross Validation
+### Cross Validation {#sec-cross-validation}
 
 The small ~100-year dataset with temporally autocorrelated observations presented
 challenges for employing standard k-fold cross validation. A naive initial approach would be
@@ -28,7 +29,7 @@ was linearly sampled from the full ~100-year dataset, and 2025 was circularly co
 compared to standard k-fold cross validation, this approach makes better use of the limited
 number of total years, and validation sets are sufficiently large.
 
-### Hyperparameter Tuning
+### Hyperparameter Tuning {#sec-hyperparameter-tuning}
 
 There were quite a few hyperparameters to tune:
 
@@ -44,9 +45,13 @@ After arriving in a good range, I verified that perturbations of any hyperparame
 resulted in worse scores for validation performance or similarity of optimized paths across
 folds:
 
-TODO: the plot showing this
+::: {#fig-hyperparameter-screen}
+![](assets/figures/validation_vs_similarity.png)
 
-## Validation of Retirement Paths
+Hyperparameter perturbation screen, comparing validation performance against similarity of optimized paths across folds.
+:::
+
+## Validation of Retirement Paths {#sec-retirement-validation}
 
 Due to the tiny size of the historical dataset, my machine learning approach employed a
 training and validation set, but no final test set. Instead, after fixing hyperparameters
@@ -55,7 +60,19 @@ the project, and compared performance against target-date glide paths publicly d
 [Vanguard](https://workplace.vanguard.com/investment/strategies/tdf-glide-path.html)
 and [Fidelity](https://institutional.fidelity.com/app/proxy/content?literatureURL=/9921209.PDF).
 
-TODO: show my glide path, Vanguard's, and Fidelity's side by side, likely as ribbon plots
+::: {.panel-tabset}
+## My optimized path
+
+![](assets/figures/retirement_allocation.png)
+
+## Vanguard approximation
+
+![](assets/figures/vanguard_glide_path.png)
+
+## Fidelity approximation
+
+![](assets/figures/fidelity_glide_path.png)
+:::
 
 As a caveat, both Vanguard and Fidelity place assets in their glide paths that don't fit
 perfectly in my 3 categories; for example, non-US equities were approximated as US equities
@@ -66,21 +83,29 @@ tool for my optimization approach.
 
 I separated compared post-retirement outcomes and pre-retirement outcomes.
 
-### Post-Retirement Outcomes
+### Post-Retirement Outcomes {#sec-post-retirement-outcomes}
 
 After optimization, my glide path performs better at every tested definition of risk. Here
 I consider the proportion of initial (age-65) wealth left at age 90 (y-axis) among the
 worst N% of simulated outcomes.
 
-TODO: show terminal-wealth barplots
+::: {#fig-post-retirement-external-comparison}
+![](assets/figures/post_retirement_external_comparison.png)
 
-### Pre-Retirement Outcomes
+Post-retirement external comparison across downside-risk definitions.
+:::
+
+### Pre-Retirement Outcomes {#sec-pre-retirement-outcomes}
 
 My optimal portfolio appeared favorable or comparable to Fidelity or Vanguard's in
 pre-retirement as well. Here I show each approach's performance relative to the mean on the
 y-axis. At a given age, I essentially calculate a ratio of terminal wealth to starting wealth
-among the worst N% of simulations (TODO: link to appropriate docs section better describing this).
+among the worst N% of simulations (see the [retirement accumulation objective](dataset_simulation.qmd#sec-scoring-glide-path)).
 At more conservative definitions of risk, my portfolio performs favorably (recall it optimizes
 for worst 4%), while Fidelity outperforms it in typical returns.
 
-TODO: show line plot of relative pre-retirement performance
+::: {#fig-pre-retirement-external-comparison}
+![](assets/figures/pre_retirement_external_comparison.png)
+
+Pre-retirement external comparison against Vanguard and Fidelity approximations, shown relative to the same-age mean.
+:::

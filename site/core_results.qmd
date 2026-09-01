@@ -1,30 +1,67 @@
 ---
 title: "Core Results"
+description: "Final retirement and non-retirement glide paths, with the retirement withdrawal-rate check."
 ---
 
 The main output of this project is a guideline (glide path) for investment strategy for retirement and non-retirement accounts.
 
-## Retirement
+## Retirement {#sec-retirement-results}
 
-### Glide Path
+### Glide Path {#sec-retirement-glide-path}
 
-TODO: simplex and ribbon-plot depictions of the chosen glide path
+::: {.panel-tabset}
+## Allocation ribbon
+
+::: {#fig-retirement-allocation}
+![](assets/figures/retirement_allocation.png)
+
+Optimized retirement glide path weights by age.
+:::
+
+## Simplex path
+
+::: {#fig-retirement-simplex}
+![](assets/figures/retirement_simplex.png)
+
+The same optimized retirement path on the stock/bond/T-bill simplex.
+:::
+:::
 
 An optimal glide path for retirement involves near-100% allocation into stocks through age 30.
 As an investor approaches retirement, this allocation decreases, replaced primarily by bonds
 until arriving at the post-retirement allocation of 48% stocks/ 24% bonds/ 28% T-bills
 
-### Annual Withdrawals
+### Annual Withdrawals {#sec-annual-withdrawals}
 
 The project also tested whether the standard 4% advice for withdrawals in retirement was reasonable.
 Interestingly, under my assumptions, 4% was slightly too risky; around 3.5% seemed the most-aggressive
-safe rate. TODO: refer to docs covering this in more detail
+safe rate. See [Determining Annual Withdrawals](dataset_simulation.qmd#sec-determining-annual-withdrawals) for more detail.
 
-TODO: show the plot visually demonstrating that 3.5% is a good choice
+::: {#fig-core-withdrawal-sweep}
+![](assets/figures/withdrawal_rate_sweep.png)
 
-## Non-Retirement
+Withdrawal-rate sweep used to choose 3.5% as the retirement modeling assumption.
+:::
 
-TODO: simplex and ribbon-plot depictions of the chosen glide path
+## Non-Retirement {#sec-non-retirement-results}
+
+::: {.panel-tabset}
+## Allocation ribbon
+
+::: {#fig-non-retirement-allocation}
+![](assets/figures/non_retirement_allocation.png)
+
+Optimized non-retirement glide path weights by investment horizon.
+:::
+
+## Simplex path
+
+::: {#fig-non-retirement-simplex}
+![](assets/figures/non_retirement_simplex.png)
+
+The same optimized non-retirement glide path on the stock/bond/T-bill simplex.
+:::
+:::
 
 An investor with just a year to invest should invest roughly 10% stocks/ 90% T-bills. Longer horizons gradually trade
 T-bills for intermediate-duration bonds, and gain more stock exposure. By 30 years, we're somewhat close to the famous
