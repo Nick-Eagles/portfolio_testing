@@ -1,5 +1,4 @@
 ---
-title: "Data-Driven Optimal Portfolio Selection Project"
 page-layout: full
 toc: false
 ---

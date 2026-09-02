@@ -127,7 +127,7 @@ body {
   color: var(--portfolio-ink);
 }
 
-.project-card h3 a::after {
+.project-card h3 > a:not(.anchorjs-link)::after {
   content: "";
   position: absolute;
   inset: 0;
