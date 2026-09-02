@@ -88,14 +88,14 @@
     "href": "core_results.html#sec-retirement-results",
     "title": "Core Results",
     "section": "Retirement",
-    "text": "Retirement\n\nGlide Path\n\nAllocation ribbonSimplex path\n\n\n\n\n\n\n\n\nFigure 1: Optimized retirement glide path weights by age.\n\n\n\n\n\n\n\n\n\n\n\nFigure 2: The same optimized retirement path on the stock/bond/T-bill simplex.\n\n\n\n\n\n\nAn optimal glide path for retirement involves near-100% allocation into stocks through age 30. As an investor approaches retirement, this allocation decreases, replaced primarily by bonds until arriving at the post-retirement allocation of 48% stocks/ 24% bonds/ 28% T-bills\n\n\nAnnual Withdrawals\nThe project also tested whether the standard 4% advice for withdrawals in retirement was reasonable. Interestingly, under my assumptions, 4% was slightly too risky; around 3.5% seemed the most-aggressive safe rate. See Determining Annual Withdrawals for more detail.\n\n\n\n\n\n\nFigure 3: Withdrawal-rate sweep used to choose 3.5% as the retirement modeling assumption."
+    "text": "Retirement\n\nGlide Path\n\n\n\n\n\n\n\n\nFigure 1: Optimized retirement glide path weights by age.\n\n\n\nAn optimal glide path for retirement involves near-100% allocation into stocks through age 30. As an investor approaches retirement, this allocation decreases, replaced primarily by bonds until arriving at the post-retirement allocation of 48% stocks/ 24% bonds/ 28% T-bills\n\n\nAnnual Withdrawals\nThe project also tested whether the standard 4% advice for withdrawals in retirement was reasonable. Interestingly, under my assumptions, 4% was slightly too risky; around 3.5% seemed the most-aggressive safe rate. See Determining Annual Withdrawals for more detail.\n\n\n\n\n\n\nFigure 2: Withdrawal-rate sweep used to choose 3.5% as the retirement modeling assumption."
   },
   {
     "objectID": "core_results.html#sec-non-retirement-results",
     "href": "core_results.html#sec-non-retirement-results",
     "title": "Core Results",
     "section": "Non-Retirement",
-    "text": "Non-Retirement\n\nAllocation ribbonSimplex path\n\n\n\n\n\n\n\n\nFigure 4: Optimized non-retirement glide path weights by investment horizon.\n\n\n\n\n\n\n\n\n\n\n\nFigure 5: The same optimized non-retirement glide path on the stock/bond/T-bill simplex.\n\n\n\n\n\n\nAn investor with just a year to invest should invest roughly 10% stocks/ 90% T-bills. Longer horizons gradually trade T-bills for intermediate-duration bonds, and gain more stock exposure. By 30 years, we’re somewhat close to the famous 60/40 at 60% stocks/ 32% bonds/ 8% T-bills. At a 50-year horizon, the optimal portfolio hits about 87% stocks/ 13% bonds."
+    "text": "Non-Retirement\n\n\n\n\n\n\n\n\nFigure 3: Optimized non-retirement glide path weights by investment horizon.\n\n\n\nAn investor with just a year to invest should invest roughly 10% stocks/ 90% T-bills. Longer horizons gradually trade T-bills for intermediate-duration bonds, and gain more stock exposure. By 30 years, we’re somewhat close to the famous 60/40 at 60% stocks/ 32% bonds/ 8% T-bills. At a 50-year horizon, the optimal portfolio hits about 87% stocks/ 13% bonds."
   },
   {
     "objectID": "dataset_simulation.html",

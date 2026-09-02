@@ -3,6 +3,8 @@ project:
   output-dir: ../docs
   resources:
     - assets/figures/**
+    - assets/data/**
+    - results_widget.js
 
 website:
   title: "Data-Driven Optimal Portfolio Selection Project"
@@ -35,6 +37,9 @@ format:
     theme:
       light: [cosmo, styles.scss]
       dark: [darkly, styles.scss]
+    css: results_widget.css
+    include-after-body:
+      - results_widget_include.html
     self-contained: false
     toc: true
     toc-depth: 3

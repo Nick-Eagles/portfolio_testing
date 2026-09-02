@@ -78,6 +78,7 @@ ul.task-list li input[type="checkbox"] {
 <style>html{ scroll-behavior: smooth; }</style>
 
 
+<link rel="stylesheet" href="results_widget.css">
 </head>
 
 <body class="nav-fixed quarto-light"><script id="quarto-html-before-body" type="application/javascript">
@@ -341,34 +342,17 @@ ul.task-list li input[type="checkbox"] {
 <h2 class="anchored" data-anchor-id="sec-retirement-results">Retirement</h2>
 <section id="sec-retirement-glide-path" class="level3">
 <h3 class="anchored" data-anchor-id="sec-retirement-glide-path">Glide Path</h3>
-<div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-1-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-1" role="tab" aria-controls="tabset-1-1" aria-selected="true" href="">Allocation ribbon</a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-1-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-2" role="tab" aria-controls="tabset-1-2" aria-selected="false" href="">Simplex path</a></li></ul>
-<div class="tab-content">
-<div id="tabset-1-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-1-1-tab">
-<div id="fig-retirement-allocation" class="quarto-float quarto-figure quarto-figure-center anchored">
+<div id="fig-retirement-interactive" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
-<div aria-describedby="fig-retirement-allocation-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img src="assets/figures/retirement_allocation.png" class="img-fluid figure-img">
+<div aria-describedby="fig-retirement-interactive-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div data-results-widget="" data-source="assets/data/retirement_path.json">
+
 </div>
-<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-retirement-allocation-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-retirement-interactive-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 Figure&nbsp;1: Optimized retirement glide path weights by age.
 </figcaption>
 </figure>
-</div>
-</div>
-<div id="tabset-1-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-1-2-tab">
-<div id="fig-retirement-simplex" class="quarto-float quarto-figure quarto-figure-center anchored">
-<figure class="quarto-float quarto-float-fig figure">
-<div aria-describedby="fig-retirement-simplex-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img src="assets/figures/retirement_simplex.png" class="img-fluid figure-img">
-</div>
-<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-retirement-simplex-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;2: The same optimized retirement path on the stock/bond/T-bill simplex.
-</figcaption>
-</figure>
-</div>
-</div>
-</div>
 </div>
 <p>An optimal glide path for retirement involves near-100% allocation into stocks through age 30. As an investor approaches retirement, this allocation decreases, replaced primarily by bonds until arriving at the post-retirement allocation of 48% stocks/ 24% bonds/ 28% T-bills</p>
 </section>
@@ -381,7 +365,7 @@ Figure&nbsp;2: The same optimized retirement path on the stock/bond/T-bill simpl
 <img src="assets/figures/withdrawal_rate_sweep.png" class="img-fluid figure-img">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-core-withdrawal-sweep-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;3: Withdrawal-rate sweep used to choose 3.5% as the retirement modeling assumption.
+Figure&nbsp;2: Withdrawal-rate sweep used to choose 3.5% as the retirement modeling assumption.
 </figcaption>
 </figure>
 </div>
@@ -389,34 +373,17 @@ Figure&nbsp;3: Withdrawal-rate sweep used to choose 3.5% as the retirement model
 </section>
 <section id="sec-non-retirement-results" class="level2">
 <h2 class="anchored" data-anchor-id="sec-non-retirement-results">Non-Retirement</h2>
-<div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-2-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-2-1" role="tab" aria-controls="tabset-2-1" aria-selected="true" href="">Allocation ribbon</a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-2-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-2-2" role="tab" aria-controls="tabset-2-2" aria-selected="false" href="">Simplex path</a></li></ul>
-<div class="tab-content">
-<div id="tabset-2-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-2-1-tab">
-<div id="fig-non-retirement-allocation" class="quarto-float quarto-figure quarto-figure-center anchored">
+<div id="fig-non-retirement-interactive" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
-<div aria-describedby="fig-non-retirement-allocation-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img src="assets/figures/non_retirement_allocation.png" class="img-fluid figure-img">
+<div aria-describedby="fig-non-retirement-interactive-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div data-results-widget="" data-source="assets/data/non_retirement_path.json">
+
 </div>
-<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-non-retirement-allocation-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;4: Optimized non-retirement glide path weights by investment horizon.
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-non-retirement-interactive-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;3: Optimized non-retirement glide path weights by investment horizon.
 </figcaption>
 </figure>
-</div>
-</div>
-<div id="tabset-2-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-2-2-tab">
-<div id="fig-non-retirement-simplex" class="quarto-float quarto-figure quarto-figure-center anchored">
-<figure class="quarto-float quarto-float-fig figure">
-<div aria-describedby="fig-non-retirement-simplex-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img src="assets/figures/non_retirement_simplex.png" class="img-fluid figure-img">
-</div>
-<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-non-retirement-simplex-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;5: The same optimized non-retirement glide path on the stock/bond/T-bill simplex.
-</figcaption>
-</figure>
-</div>
-</div>
-</div>
 </div>
 <p>An investor with just a year to invest should invest roughly 10% stocks/ 90% T-bills. Longer horizons gradually trade T-bills for intermediate-duration bonds, and gain more stock exposure. By 30 years, we’re somewhat close to the famous 60/40 at 60% stocks/ 32% bonds/ 8% T-bills. At a 50-year horizon, the optimal portfolio hits about 87% stocks/ 13% bonds.</p>
 
@@ -424,6 +391,7 @@ Figure&nbsp;5: The same optimized non-retirement glide path on the stock/bond/T-
 </section>
 
 </main> <!-- /main -->
+<script src="results_widget.js"></script>
 <script id="quarto-html-after-body" type="application/javascript">
   window.document.addEventListener("DOMContentLoaded", function (event) {
     // Ensure there is a toggle, if there isn't float one in the top right
