@@ -481,7 +481,6 @@ def plot_validation_similarity(output_dir: Path, summary: pd.DataFrame) -> None:
     ax.set_ylabel("Mean validation canonical objective")
     ax.set_title("Validation vs across-fold path similarity")
     ax.grid(alpha=0.25)
-    ax.legend(frameon=False)
     fig.savefig(output_dir / "validation_vs_similarity.png", dpi=170)
     plt.close(fig)
 
