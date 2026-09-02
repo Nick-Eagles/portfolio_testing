@@ -18,14 +18,14 @@
     "href": "index.html",
     "title": "Data-Driven Optimal Portfolio Selection Project",
     "section": "",
-    "text": "This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor’s particular situation.\nI have separate pages diving into the dataset, statistical framing, optimization strategy, and even an interactive app for exploring results.\n\nCore results Why trust the results?"
+    "text": "This project aims to evaluate, under simple constraints, an optimal portfolio choice for both retirement and non-retirement contexts. Investing choices are limited to U.S. equities, U.S. bonds, and U.S. short-duration treasuries, with the assumption that these broad classes alone (likely purchased as common index funds) can construct a reasonable portfolio for individual investors with arbitrary time horizons. The goal is to provide a solid data-driven reference point for reasonable asset-class allocation as a function of age or horizon, without diving into the other complexities of an individual investor’s particular situation.\nI have separate pages diving into the dataset, statistical framing, optimization strategy, and a (slightly interactive) page of results.\n\nCore results Why trust the results?"
   },
   {
     "objectID": "index.html#explore-the-project",
     "href": "index.html#explore-the-project",
     "title": "Data-Driven Optimal Portfolio Selection Project",
     "section": "Explore the project",
-    "text": "Explore the project\n\n\nProject Goals\nA basic overview of the project framing, and what financial questions I wanted to answer.\n\n\nDataset and Simulation Strategy\nDetails covering the historical dataset and how I sampled it to rank portfolio choices.\n\n\nOptimization Algorithms\nA mathematical description of the algorithm I designed to reliably arrive at an optimal glide path.\n\n\nWhy Trust My Results?\nThe ML techniques and validation strategy I employed to produce robust, trustworthy results.\n\n\nCore Results\nWhat interesting results did this project produce?\n\n\nWeb App\nAn interactive in-browser app to explore my results under different settings."
+    "text": "Explore the project\n\n\nProject Goals\nA basic overview of the project framing, and what financial questions I wanted to answer.\n\n\nDataset and Simulation Strategy\nDetails covering the historical dataset and how I sampled it to rank portfolio choices.\n\n\nOptimization Algorithms\nA mathematical description of the algorithm I designed to reliably arrive at an optimal glide path.\n\n\nWhy Trust My Results?\nThe ML techniques and validation strategy I employed to produce robust, trustworthy results.\n\n\nCore Results\nWhat interesting results did this project produce?"
   },
   {
     "objectID": "why_trust.html",
@@ -47,13 +47,6 @@
     "title": "Why Trust My Results?",
     "section": "Validation of Retirement Paths",
     "text": "Validation of Retirement Paths\nDue to the tiny size of the historical dataset, my machine learning approach employed a training and validation set, but no final test set. Instead, after fixing hyperparameters selected from validation, I tested the optimization algorithm on the retirement branch of the project, and compared performance against target-date glide paths publicly described by Vanguard and Fidelity.\n\nMy optimized pathVanguard approximationFidelity approximation\n\n\n\n\n\n\n\n\n\n\n\n\nAs a caveat, both Vanguard and Fidelity place assets in their glide paths that don’t fit perfectly in my 3 categories; for example, non-US equities were approximated as US equities for the purposes of my simulations, and TIPS were considered short-duration treasuries. In general, this could lead to underrepresenting the true portfolio performance of their funds in my comparison. However, their glide paths still serve as a useful approximate validation tool for my optimization approach.\nI separated compared post-retirement outcomes and pre-retirement outcomes.\n\nPost-Retirement Outcomes\nAfter optimization, my glide path performs better at every tested definition of risk. Here I consider the proportion of initial (age-65) wealth left at age 90 (y-axis) among the worst N% of simulated outcomes.\n\n\n\n\n\n\nFigure 2: Post-retirement external comparison across downside-risk definitions.\n\n\n\n\n\nPre-Retirement Outcomes\nMy optimal portfolio appeared favorable or comparable to Fidelity or Vanguard’s in pre-retirement as well. Here I show each approach’s performance relative to the mean on the y-axis. At a given age, I essentially calculate a ratio of terminal wealth to starting wealth among the worst N% of simulations (see the retirement accumulation objective). At more conservative definitions of risk, my portfolio performs favorably (recall it optimizes for worst 4%), while Fidelity outperforms it in typical returns.\n\n\n\n\n\n\nFigure 3: Pre-retirement external comparison against Vanguard and Fidelity approximations, shown relative to the same-age mean."
-  },
-  {
-    "objectID": "web_app.html",
-    "href": "web_app.html",
-    "title": "Web App",
-    "section": "",
-    "text": "The web app is intentionally still a later part of the project. My plan is to make these choices configurable here, since retirement age, withdrawal rate, time horizon, and starting assumptions vary substantially by investor.\n\n\n\n\n\n\nNoteComing later\n\n\n\nThis page is reserved for the in-browser explorer. The static documentation pages currently carry the project framing, methods, validation, and core results."
   },
   {
     "objectID": "optimization.html",

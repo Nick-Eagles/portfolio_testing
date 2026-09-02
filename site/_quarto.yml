@@ -27,8 +27,6 @@ website:
         text: Why Trust My Results?
       - href: core_results.qmd
         text: Core Results
-      - href: web_app.qmd
-        text: Web App
   page-footer:
     center: "Built with Quarto. Historical returns from Simba's Backtesting Spreadsheet."
 
