@@ -44,11 +44,22 @@ body {
   color: #f8fcfb;
 }
 
+#title-block-header:has(+ .hero) {
+  max-width: 1120px;
+  margin: clamp(1.5rem, 4vw, 3rem) auto 1.25rem;
+  padding: 0 max(1.5rem, calc((100vw - 1120px) / 2));
+}
+
+#title-block-header:has(+ .hero) .title {
+  max-width: 940px;
+  margin-bottom: 0;
+}
+
 .hero {
   min-height: clamp(440px, 72vh, 760px);
   display: grid;
   align-items: end;
-  margin: -1.5rem calc(50% - 50vw) 2.2rem;
+  margin: 0 calc(50% - 50vw) 2.2rem;
   padding: clamp(4rem, 9vw, 8rem) max(1.5rem, calc((100vw - 1120px) / 2));
   background:
     radial-gradient(circle at 78% 22%, rgba(127, 205, 187, 0.22), transparent 32rem),
