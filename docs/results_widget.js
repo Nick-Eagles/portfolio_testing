@@ -13,7 +13,7 @@
   ];
 
   function pct(value) {
-    return `${(value * 100).toFixed(2)}%`;
+    return `${(value * 100).toFixed(1)}%`;
   }
 
   function svgEl(name, attrs = {}) {
@@ -56,7 +56,6 @@
       <div class="results-tabs" role="tablist">
         <button class="results-tab" role="tab" aria-selected="true" data-tab="simplex" type="button">Simplex</button>
         <button class="results-tab" role="tab" aria-selected="false" data-tab="allocation" type="button">Allocation</button>
-        <button class="results-tab" role="tab" aria-selected="false" data-tab="weights" type="button">Weights</button>
       </div>
       <div class="results-panel active" data-panel="simplex">
         <div class="results-chart-wrap"><svg class="simplex-svg" viewBox="0 0 760 660" role="img"></svg><div class="results-tooltip"></div></div>
@@ -64,9 +63,6 @@
       <div class="results-panel" data-panel="allocation">
         <div class="results-chart-wrap"><svg class="allocation-svg" viewBox="0 0 820 430" role="img"></svg><div class="results-tooltip"></div></div>
         <div class="results-legend"></div>
-      </div>
-      <div class="results-panel" data-panel="weights">
-        <div class="results-big-readout"></div>
       </div>
       <div class="results-readout"></div>
     `;
@@ -101,19 +97,6 @@
     compact.innerHTML = `
       <div class="selected-key">${label}</div>
       ${ASSETS.map(([key, name]) => `<div class="results-weight"><strong>${pct(point[key])}</strong><span>${name}</span></div>`).join("")}
-    `;
-
-    const big = root.querySelector(".results-big-readout");
-    big.innerHTML = `
-      <div class="selected-key">${label}</div>
-      <div class="results-big-weights">
-        ${ASSETS.map(([key, name, color]) => `
-          <div class="results-big-weight" style="color: ${color}">
-            <strong>${pct(point[key])}</strong>
-            <span>${name}</span>
-          </div>
-        `).join("")}
-      </div>
     `;
   }
 
