@@ -103,12 +103,14 @@ body {
 }
 
 .project-card {
+  position: relative;
   min-height: 10.5rem;
   border: 1px solid var(--portfolio-line);
   border-radius: 8px;
   padding: 1.05rem;
   color: var(--portfolio-ink);
   background: var(--portfolio-panel);
+  cursor: pointer;
 }
 
 .project-card:hover {
@@ -123,6 +125,12 @@ body {
 
 .project-card h3 a {
   color: var(--portfolio-ink);
+}
+
+.project-card h3 a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
 }
 
 .project-card p {
