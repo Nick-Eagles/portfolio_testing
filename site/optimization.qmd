@@ -8,9 +8,9 @@ split this into the final algorithm used for results and all other algorithms at
 ## Final Algorithm {#sec-final-algorithm}
 
 ::: {#fig-optimization-simplex}
-![](assets/figures/non_retirement_simplex.png)
+![](assets/figures/non_retirement_bisection_convergence.gif)
 
-The final non-retirement glide path on the asset simplex, colored by horizon after the bisection/control-point optimizer converged on the full dataset.
+The full-dataset, good-start, non-retirement glide path converging on the asset simplex. The colored points show horizons, while the white points show the active control points at each gradient step.
 :::
 
 I developed the algorithm to work initially in a non-retirement context, which I'll describe here; however, the algorithm is generalizable to any glide path, including the

@@ -61,7 +61,12 @@ from core import (
     DEFAULT_SMOOTHING_STRENGTH,
     DEFAULT_YEAR_CV_TRAIN_FRACTION,
 )
-from plots import plot_allocation_area, plot_final_simplex_doc, plot_validation_traces
+from plots import (
+    plot_allocation_area,
+    plot_final_simplex_doc,
+    plot_simplex_path_animation,
+    plot_validation_traces,
+)
 
 OPTIMIZED_START_AGE = MIN_STARTING_AGE
 FIXED_ANCHOR_AGE = RETIREMENT_AGE
@@ -750,7 +755,7 @@ def optimize_control_points(
     iteration: int,
     starting_step: int,
     validation_path_returns: np.ndarray | None = None,
-) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int]:
+) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int, list[pd.DataFrame]]:
     control_ages = sorted(control_points)
     values = np.vstack([control_points[age] for age in control_ages])
     fixed_mask = np.array([age == FIXED_ANCHOR_AGE for age in control_ages])
@@ -759,6 +764,7 @@ def optimize_control_points(
     second_moment = np.zeros_like(values)
     beta1, beta2, epsilon = 0.9, 0.999, 1e-9
     rows: list[dict[str, float | int]] = []
+    snapshots: list[pd.DataFrame] = []
     value_history: list[np.ndarray] = []
     global_step = starting_step
 
@@ -853,6 +859,22 @@ def optimize_control_points(
                 "smoothing_bandwidth": smoothing_bandwidth if smooth else 0.0,
             }
         )
+        current_control_points = {
+            age: values[index].copy()
+            for index, age in enumerate(control_ages)
+        }
+        snapshots.append(
+            path_frame(
+                current_control_points,
+                fixed_weights_by_age,
+                iteration,
+                updated_canonical_objective,
+                updated_curvature_penalty,
+                curvature_penalty,
+                updated_regularized_objective,
+                global_step,
+            )
+        )
         value_history.append(values.copy())
         if (
             early_stop
@@ -860,12 +882,18 @@ def optimize_control_points(
             and rows[-4]["regularized_objective"] > rows[-1]["regularized_objective"]
         ):
             rows = rows[:-3]
+            snapshots = snapshots[:-3]
             value_history = value_history[:-3]
             global_step -= 3
             values = value_history[-1].copy()
             break
 
-    return {age: values[index].copy() for index, age in enumerate(control_ages)}, rows, global_step
+    return (
+        {age: values[index].copy() for index, age in enumerate(control_ages)},
+        rows,
+        global_step,
+        snapshots,
+    )
 
 
 def path_frame(
@@ -942,7 +970,12 @@ def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
     fig, axes = plt.subplots(rows, columns, figsize=(columns * 5.4, rows * 4.6), constrained_layout=True, squeeze=False)
     marker_mappable = None
     for ax, iteration in zip(axes.ravel(), iterations):
-        frame = history[(history["iteration"] == iteration) & (history["starting_age"] <= FIXED_ANCHOR_AGE)].sort_values("starting_age")
+        iteration_history = history[history["iteration"] == iteration]
+        latest_step = iteration_history["gradient_step"].max()
+        frame = iteration_history[
+            (iteration_history["gradient_step"] == latest_step)
+            & (iteration_history["starting_age"] <= FIXED_ANCHOR_AGE)
+        ].sort_values("starting_age")
         coords = add_simplex_coordinates(frame.rename(columns={"starting_age": "horizon"}))
         controls = coords[coords["is_control_point"]]
         draw_simplex_outline(ax)
@@ -1165,7 +1198,7 @@ def run_single_optimization(
         f"pre-bisection: 2 control points, {args.gradient_steps} gradient steps",
         flush=True,
     )
-    control_points, rows, global_step = optimize_control_points(
+    control_points, rows, global_step, snapshots = optimize_control_points(
         path_returns=path_returns,
         fixed_weights_by_age=fixed_weights_by_age,
         contributions=contributions,
@@ -1184,6 +1217,7 @@ def run_single_optimization(
         validation_path_returns=validation_path_returns,
     )
     trace_rows.extend(rows)
+    path_history.extend(snapshots)
     current_path = interpolate_control_points(control_points)
     (
         current_canonical_objective,
@@ -1198,24 +1232,12 @@ def run_single_optimization(
         curvature_penalty=args.curvature_penalty,
         curvature_huber_delta=args.curvature_huber_delta,
     )
-    path_history = [
-        path_frame(
-            control_points,
-            fixed_weights_by_age,
-            0,
-            current_canonical_objective,
-            current_curvature_penalty,
-            args.curvature_penalty,
-            current_regularized_objective,
-            global_step,
-        )
-    ]
     control_history = [control_frame(control_points, 0)]
 
     for iteration in range(1, args.bisections + 1):
         control_points = bisect_control_points(control_points)
         print(f"iteration {iteration}: {len(control_points)} control points, {args.gradient_steps} gradient steps", flush=True)
-        control_points, rows, global_step = optimize_control_points(
+        control_points, rows, global_step, snapshots = optimize_control_points(
             path_returns=path_returns,
             fixed_weights_by_age=fixed_weights_by_age,
             contributions=contributions,
@@ -1234,6 +1256,7 @@ def run_single_optimization(
             validation_path_returns=validation_path_returns,
         )
         trace_rows.extend(rows)
+        path_history.extend(snapshots)
         current_path = interpolate_control_points(control_points)
         (
             current_canonical_objective,
@@ -1282,6 +1305,17 @@ def run_single_optimization(
     write_metadata(args, output_dir, post_retirement_block)
     plot_contribution_scales(scales, plot_dir / "contribution_start_constants_by_age.pdf")
     plot_iteration_paths(path_history_frame, plot_dir / "path_iterations.pdf")
+    animation_history = path_history_frame[
+        path_history_frame["starting_age"] <= FIXED_ANCHOR_AGE
+    ]
+    plot_simplex_path_animation(
+        animation_history,
+        plot_dir / "retirement_path_convergence.gif",
+        value_column="starting_age",
+        colorbar_label="Starting age",
+        title="Retirement path convergence",
+        max_value=FIXED_ANCHOR_AGE,
+    )
     accumulation_path = final_path[final_path["starting_age"] <= FIXED_ANCHOR_AGE]
     plot_final_simplex_doc(
         accumulation_path,

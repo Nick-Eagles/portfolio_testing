@@ -8,6 +8,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.cm import ScalarMappable
 from matplotlib.collections import Collection
 import numpy as np
 import pandas as pd
@@ -241,6 +243,98 @@ def plot_final_simplex_doc(
         plt.close(fig)
 
 
+def plot_simplex_path_animation(
+    history: pd.DataFrame,
+    output_gif: Path,
+    value_column: str,
+    colorbar_label: str,
+    title: str,
+    max_value: int | None = None,
+    frame_column: str = "gradient_step",
+    fps: int = 8,
+    dpi: int = 110,
+) -> None:
+    """Animate a simplex path history, highlighting active control points."""
+    if history.empty:
+        return
+    required = {frame_column, value_column, *WEIGHT_COLUMNS, "is_control_point"}
+    missing = required - set(history.columns)
+    if missing:
+        raise ValueError(f"animation history missing columns: {sorted(missing)}")
+
+    output_gif.parent.mkdir(parents=True, exist_ok=True)
+    frame_ids = sorted(history[frame_column].dropna().unique())
+    if not frame_ids:
+        return
+
+    values = history[value_column].astype(float)
+    norm = plt.Normalize(values.min(), max_value or values.max())
+    mappable = ScalarMappable(norm=norm, cmap=HORIZON_CMAP)
+    mappable.set_array([])
+
+    fig, ax = plt.subplots(figsize=(8.5, 7.5), constrained_layout=True)
+    colorbar = fig.colorbar(mappable, ax=ax, shrink=0.82)
+    colorbar.set_label(colorbar_label)
+
+    def draw(frame_id: int) -> list:
+        ax.clear()
+        frame = history[history[frame_column] == frame_id].sort_values(value_column).copy()
+        coords_input = frame.rename(columns={value_column: "horizon"})
+        coords = add_simplex_coordinates(coords_input)
+        controls = coords[coords["is_control_point"]]
+        draw_simplex_outline(ax)
+        ax.plot(
+            coords["simplex_x"],
+            coords["simplex_y"],
+            color="black",
+            linewidth=2.0,
+            zorder=3,
+        )
+        ax.scatter(
+            coords["simplex_x"],
+            coords["simplex_y"],
+            c=frame[value_column],
+            cmap=HORIZON_CMAP,
+            norm=norm,
+            s=30,
+            alpha=0.85,
+            zorder=4,
+        )
+        ax.scatter(
+            controls["simplex_x"],
+            controls["simplex_y"],
+            color="white",
+            edgecolor="black",
+            linewidth=1.0,
+            s=82,
+            zorder=5,
+        )
+        for _, row in controls.iterrows():
+            ax.annotate(
+                f"{int(row['horizon'])}",
+                xy=(row["simplex_x"], row["simplex_y"]),
+                xytext=(6, 5),
+                textcoords="offset points",
+                fontsize=9,
+                fontweight="bold",
+                color="black",
+                zorder=6,
+            )
+        iteration = int(frame["iteration"].iloc[0]) if "iteration" in frame else 0
+        controls_count = int(frame["is_control_point"].sum())
+        ax.set_title(
+            f"{title}\nBisection {iteration}; gradient step {int(frame_id)}; "
+            f"{controls_count} control points",
+            fontweight="bold",
+        )
+        ax.set_aspect("equal")
+        return []
+
+    animation = FuncAnimation(fig, draw, frames=frame_ids, interval=1000 / fps, blit=False)
+    animation.save(output_gif, writer=PillowWriter(fps=fps), dpi=dpi)
+    plt.close(fig)
+
+
 def plot_per_horizon_scores(
     strategies: dict[str, pd.DataFrame],
     dataset: str,
@@ -406,15 +500,16 @@ def plot_gradient_snapshots(
     if not trajectory_csv.exists():
         return
     trajectory = pd.read_csv(trajectory_csv)
-    iterations = sorted(trajectory["iteration"].unique())
-    if not iterations:
+    frame_column = "gradient_step" if "gradient_step" in trajectory.columns else "iteration"
+    frame_ids = sorted(trajectory[frame_column].unique())
+    if not frame_ids:
         return
-    selected_indexes = np.linspace(0, len(iterations) - 1, snapshots)
-    selected_iterations = [iterations[int(round(index))] for index in selected_indexes]
-    selected_iterations = list(dict.fromkeys(selected_iterations))
+    selected_indexes = np.linspace(0, len(frame_ids) - 1, snapshots)
+    selected_frames = [frame_ids[int(round(index))] for index in selected_indexes]
+    selected_frames = list(dict.fromkeys(selected_frames))
 
     columns = 3
-    rows = int(np.ceil(len(selected_iterations) / columns))
+    rows = int(np.ceil(len(selected_frames) / columns))
     fig, axes = plt.subplots(
         rows,
         columns,
@@ -423,8 +518,8 @@ def plot_gradient_snapshots(
         squeeze=False,
     )
     marker_mappable = None
-    for ax, iteration in zip(axes.ravel(), selected_iterations):
-        frame = trajectory[trajectory["iteration"] == iteration].sort_values("horizon")
+    for ax, frame_id in zip(axes.ravel(), selected_frames):
+        frame = trajectory[trajectory[frame_column] == frame_id].sort_values("horizon")
         coords = add_simplex_coordinates(frame)
         draw_simplex_outline(ax)
         ax.plot(
@@ -443,9 +538,11 @@ def plot_gradient_snapshots(
             zorder=4,
         )
         marker_mappable = add_horizon_markers(ax, coords, size=22)
-        ax.set_title(f"iteration {iteration}")
+        iteration = int(frame["iteration"].iloc[0])
+        label = f"gradient step {int(frame_id)}" if frame_column == "gradient_step" else f"iteration {iteration}"
+        ax.set_title(f"{label}; bisection {iteration}")
         ax.set_aspect("equal")
-    for ax in axes.ravel()[len(selected_iterations) :]:
+    for ax in axes.ravel()[len(selected_frames) :]:
         ax.axis("off")
     fig.suptitle("Best gradient-ascent path snapshots", fontsize=13)
     add_horizon_colorbar(fig, marker_mappable, axes.ravel().tolist())

@@ -72,6 +72,7 @@ from plots import (
     plot_final_simplex_doc,
     plot_gradient_snapshots,
     plot_optimization_traces,
+    plot_simplex_path_animation,
     plot_validation_traces,
 )
 
@@ -547,7 +548,7 @@ def optimize_control_points(
     starting_step: int,
     validation_path_returns: np.ndarray | None = None,
     validation_asset_returns: np.ndarray | None = None,
-) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int]:
+) -> tuple[dict[int, np.ndarray], list[dict[str, float | int]], int, list[pd.DataFrame]]:
     if steps < 0:
         raise ValueError("--gradient-steps must be non-negative.")
     if learning_rate <= 0:
@@ -562,6 +563,7 @@ def optimize_control_points(
     second_moment = np.zeros_like(values)
     beta1, beta2, epsilon = 0.9, 0.999, 1e-9
     rows: list[dict[str, float | int]] = []
+    snapshots: list[pd.DataFrame] = []
     value_history: list[np.ndarray] = []
     global_step = starting_step
 
@@ -660,6 +662,21 @@ def optimize_control_points(
                 "smoothing_bandwidth": smoothing_bandwidth if smooth else 0.0,
             }
         )
+        current_control_points = {
+            horizon: values[index].copy()
+            for index, horizon in enumerate(control_horizons)
+        }
+        snapshots.append(
+            path_frame(
+                current_control_points,
+                iteration,
+                updated_canonical_objective,
+                updated_curvature_penalty,
+                curvature_penalty,
+                updated_regularized_objective,
+                global_step,
+            )
+        )
         value_history.append(values.copy())
 
         if (
@@ -668,6 +685,7 @@ def optimize_control_points(
             and rows[-4]["regularized_objective"] > rows[-1]["regularized_objective"]
         ):
             rows = rows[:-3]
+            snapshots = snapshots[:-3]
             value_history = value_history[:-3]
             global_step -= 3
             values = value_history[-1].copy()
@@ -676,7 +694,7 @@ def optimize_control_points(
     updated = {
         horizon: values[index].copy() for index, horizon in enumerate(control_horizons)
     }
-    return updated, rows, global_step
+    return updated, rows, global_step, snapshots
 
 
 def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
@@ -692,7 +710,11 @@ def plot_iteration_paths(history: pd.DataFrame, output_pdf: Path) -> None:
     )
     marker_mappable = None
     for ax, iteration in zip(axes.ravel(), iterations):
-        frame = history[history["iteration"] == iteration].sort_values("horizon")
+        iteration_history = history[history["iteration"] == iteration]
+        latest_step = iteration_history["gradient_step"].max()
+        frame = iteration_history[
+            iteration_history["gradient_step"] == latest_step
+        ].sort_values("horizon")
         coords = add_simplex_coordinates(frame)
         controls = coords[coords["is_control_point"]]
         draw_simplex_outline(ax)
@@ -895,7 +917,7 @@ def run_single_optimization(
             f"{args.gradient_steps} gradient steps",
             flush=True,
         )
-        control_points, rows, global_step = optimize_control_points(
+        control_points, rows, global_step, snapshots = optimize_control_points(
             path_returns=path_returns,
             asset_returns=asset_returns,
             control_points=control_points,
@@ -914,6 +936,7 @@ def run_single_optimization(
             validation_asset_returns=validation_asset_returns,
         )
         trace_rows.extend(rows)
+        path_history.extend(snapshots)
         current_path = interpolate_control_points(control_points)
         (
             current_canonical_objective,
@@ -926,17 +949,6 @@ def run_single_optimization(
             curvature_penalty=args.curvature_penalty,
             curvature_huber_delta=args.curvature_huber_delta,
         )
-        path_history = [
-            path_frame(
-                control_points,
-                0,
-                current_canonical_objective,
-                current_curvature_penalty,
-                args.curvature_penalty,
-                current_regularized_objective,
-                global_step,
-            )
-        ]
         control_history = [control_frame(control_points, 0)]
 
         for iteration in range(1, args.bisections + 1):
@@ -946,7 +958,7 @@ def run_single_optimization(
                 f"{args.gradient_steps} gradient steps",
                 flush=True,
             )
-            control_points, rows, global_step = optimize_control_points(
+            control_points, rows, global_step, snapshots = optimize_control_points(
                 path_returns=path_returns,
                 asset_returns=asset_returns,
                 control_points=control_points,
@@ -965,6 +977,7 @@ def run_single_optimization(
                 validation_asset_returns=validation_asset_returns,
             )
             trace_rows.extend(rows)
+            path_history.extend(snapshots)
             current_path = interpolate_control_points(control_points)
             current_canonical_objective = path_objective(
                 path_returns,
@@ -1055,7 +1068,10 @@ def run_single_optimization(
 
     summary = pd.DataFrame(summaries).sort_values("final_canonical_objective", ascending=False)
     summary.to_csv(output_dir / "optimization_start_summary.csv", index=False)
-    final_path = best_path_history_frame[best_path_history_frame["iteration"] == best_path_history_frame["iteration"].max()]
+    final_path = best_path_history_frame[
+        best_path_history_frame["gradient_step"]
+        == best_path_history_frame["gradient_step"].max()
+    ]
     final_controls = best_control_history_frame[best_control_history_frame["iteration"] == best_control_history_frame["iteration"].max()]
     final_path.to_csv(output_dir / "final_path.csv", index=False)
     final_controls.to_csv(output_dir / "final_control_points.csv", index=False)
@@ -1084,6 +1100,14 @@ def run_single_optimization(
     good_trajectory = trajectories_dir / "good_start.csv"
     if good_trajectory.exists():
         plot_gradient_snapshots(good_trajectory, plot_dir / "good_start_path_snapshots.pdf")
+        plot_simplex_path_animation(
+            pd.read_csv(good_trajectory),
+            plot_dir / "good_start_path_convergence.gif",
+            value_column="horizon",
+            colorbar_label="Horizon",
+            title="Good-start glide path convergence",
+            max_value=MAX_HORIZON,
+        )
     plot_iteration_paths(best_path_history_frame, plot_dir / "path_iterations.pdf")
     plot_final_simplex_doc(
         final_path,
